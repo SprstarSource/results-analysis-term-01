@@ -169,7 +169,8 @@ The file map (target workbooks and the sections each one requires) is hard-coded
 
 - **Date-dependent rule:** unless `WORK_YEAR_OVERRIDE` is set, the age rule uses `Year(Date)`, so re-running the same data in a different calendar year can change *Repeat year* / *Orientation* outcomes.
 - **Zero vs. absent mark:** analysis formulas treat `0` as "absent" (`>0` masks); orientation and transfer treat `0` as a real mark; Examen includes `0` in the weighted average but excludes it from per-subject statistics.
-- **School-specific configuration** (file names, section counts, coefficient tables) is hard-coded.
+- **School-specific configuration** (file names, section counts, coefficient tables, and the school/directorate names in the orientation report headers) is hard-coded.
+- Further documents: `user_guide_ar.md` and `troubleshooting_ar.md` (Arabic end-user documentation), `test_plan.md`, `contributing.md`, `security.md`, `changelog.md`.
 - **Duplicated helper code** across modules (about 56 procedure names appear more than once). Most copies are identical; `IsNum`, `LockAndProtect`, `IsWorkbookOpen` and `ClearDataArea` have diverging variants.
 - **Windows only**, and only for local folders.
 - No automated tests. The orientation algorithm in particular has not been validated against small cohorts (fewer than ~12 passers) or heavy score ties.
