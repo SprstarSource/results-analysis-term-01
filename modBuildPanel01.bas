@@ -1,34 +1,46 @@
 Attribute VB_Name = "modBuildPanel"
 Option Explicit
 
-Private m_workflowBusy As Boolean
+'==============================================================================
+' Module  : modBuildPanel
+' Purpose : builds the ControlPanel sheet. Every button is wired DIRECTLY to the
+'           entry macro of one module (no steps, no locks, no state):
+'
+'   First Term Results   -> modCollector.CollectTerm01Results
+'   Term 01 Analysis     -> modBiuldAnalysisfilesBuildAll01.Build_All
+'   Examen Analysis      -> modExamenAnalysis01.Run_ExamenAnalysis01
+'   Term 01 Orientation  -> modOrientationAll01.Run_OrientationAll01
+'                           (runs the whole orientation block in one go)
+'
+' Run BuildControlPanel once (or again after adding / renaming a module).
+' Panel_Reset / Panel_Update / Panel_Finish / Panel_Show (at the end of this module) draw the
+'           progress table of Term 01 Analysis under the buttons.
+' RefreshPanelState is kept because modCollector calls it after a collection;
+' it simply re-links the buttons (useful after "Save As" / renaming the file).
+'==============================================================================
 
-' Import only the matching term panel into each independent tool workbook.
 Private Const PANEL_SHEET As String = "ControlPanel"
-Private Const RESULTS_FILE As String = "Term01Results.xlsx"
-Private Const GUIDANCE_FILE As String = "Term01Guidance.xlsx"
-Private Const EXPORT_FILE As String = "OrientationResults01.xlsx"
-
-' Work folder name (hex code points): Term01Results.xlsx, Term01Guidance.xlsx and OrientationResults01.xlsx live in it
-Private Const WF_FOLDER_CODES As String = "645 639 627 644 62C 629 20 628 64A 627 646 627 62A 20 627 644 641 635 644 20 30 31"
+Private Const PANEL_TITLE As String = "First Term Management Dashboard"
 Private Const BUTTON_WIDTH As Double = 164
 Private Const BUTTON_HEIGHT As Double = 54
 Private Const BUTTON_GAP As Double = 12
+Private Const BUTTON_COLUMNS As Long = 2
 
+' First row of the progress table (set by Panel_Reset)
+Private m_top As Long
+
+' Each action: Array(shape name, caption, macro (Module.Procedure), colour)
 Private Function PanelActions() As Variant
     PanelActions = Array( _
-        Array("btnCollect", "First Term Results", "CollectTerm01Results", False, &H60AE27), _
-        Array("btnTerm01Analysis", "Term 01 Analysis", "modBiuldAnalysisfilesBuildAll01.Build_All", False, &HB98029), _
-        Array("btnExamen", "Examen Analysis", "modExamenAnalysis01.Run_ExamenAnalysis01", False, &HA05568), _
-        Array("btnStreamPreferences", "Stream Preferences", "modStreamPreferences01.Run_StreamPreferences01", False, &HA05568), _
-        Array("btnDataTransfer", "Data Transfer", "modTransfer01.Run_Transfer01", False, &H60AE27), _
-        Array("btnFirstTermOrientation", "First Term Orientation", "modOrientation01.Run_Orientation01", False, &HB98029), _
-        Array("btnExportOrientationResults", "Export Orientation Results", "modOrientationResults01.Run_OrientationResults01", False, &H60AE27))
+        Array("btnCollect", "First Term Results", "modCollector.CollectTerm01Results", &H60AE27), _
+        Array("btnTerm01Analysis", "Term 01 Analysis", "modBiuldAnalysisfilesBuildAll01.Build_All", &HB98029), _
+        Array("btnExamen", "Examen Analysis", "modExamenAnalysis01.Run_ExamenAnalysis01", &HA05568), _
+        Array("btnOrientation", "Term 01 Orientation", "modOrientationAll01.Run_OrientationAll01", &HB98029))
 End Function
 
 Public Sub BuildControlPanel()
     Dim ws As Worksheet, btn As Shape, actions As Variant, item As Variant
-    Dim i As Long, count As Long, columns As Long, gridRow As Long, gridCol As Long
+    Dim i As Long, count As Long, gridRow As Long, gridCol As Long
     Dim rowItems As Long, canvasWidth As Double, rowWidth As Double
     Dim originLeft As Double, originTop As Double, x As Double, y As Double
     Dim prevScreen As Boolean, errorText As String
@@ -47,6 +59,8 @@ Public Sub BuildControlPanel()
         Err.Raise vbObjectError + 803, , "Unprotect the control panel sheet before rebuilding it."
     End If
     ws.Activate
+
+    ' Start from a clean sheet: every old button (including obsolete ones) is removed.
     For i = ws.Shapes.Count To 1 Step -1
         ws.Shapes(i).Delete
     Next i
@@ -60,7 +74,7 @@ Public Sub BuildControlPanel()
         .Rows(2).RowHeight = 14
         With .Range("B1:K1")
             .Merge
-            .Value = "First Term Management Dashboard"
+            .Value = PANEL_TITLE
             .Font.Name = "Segoe UI"
             .Font.Size = 19
             .Font.Bold = True
@@ -73,16 +87,15 @@ Public Sub BuildControlPanel()
 
     actions = PanelActions()
     count = UBound(actions) - LBound(actions) + 1
-    columns = 3
-    canvasWidth = columns * BUTTON_WIDTH + (columns - 1) * BUTTON_GAP
+    canvasWidth = BUTTON_COLUMNS * BUTTON_WIDTH + (BUTTON_COLUMNS - 1) * BUTTON_GAP
     originLeft = ws.Range("B3").Left + (ws.Range("B1:K1").Width - canvasWidth) / 2
     originTop = ws.Range("B3").Top
     For i = 0 To count - 1
-        item = actions(i)
-        gridRow = i \ columns
-        gridCol = i Mod columns
-        rowItems = count - gridRow * columns
-        If rowItems > columns Then rowItems = columns
+        item = actions(LBound(actions) + i)
+        gridRow = i \ BUTTON_COLUMNS
+        gridCol = i Mod BUTTON_COLUMNS
+        rowItems = count - gridRow * BUTTON_COLUMNS
+        If rowItems > BUTTON_COLUMNS Then rowItems = BUTTON_COLUMNS
         rowWidth = rowItems * BUTTON_WIDTH + (rowItems - 1) * BUTTON_GAP
         x = originLeft + (canvasWidth - rowWidth) / 2 + gridCol * (BUTTON_WIDTH + BUTTON_GAP)
         y = originTop + gridRow * (BUTTON_HEIGHT + BUTTON_GAP)
@@ -91,12 +104,17 @@ Public Sub BuildControlPanel()
             .Name = CStr(item(0))
             .Adjustments(1) = 0.12
             .Placement = xlFreeFloating
+            .Fill.Solid
+            .Fill.ForeColor.RGB = CLng(item(3))
             .Line.Weight = 1.25
+            .Line.ForeColor.RGB = CLng(item(3))
+            .OnAction = PanelMacroAction(CStr(item(2)))
             With .TextFrame2
                 .TextRange.Text = CStr(item(1))
                 .TextRange.Font.Name = "Segoe UI"
                 .TextRange.Font.Size = 12
                 .TextRange.Font.Bold = msoTrue
+                .TextRange.Font.Fill.ForeColor.RGB = RGB(255, 255, 255)
                 .TextRange.ParagraphFormat.Alignment = msoAlignCenter
                 .VerticalAnchor = msoAnchorMiddle
                 .WordWrap = msoTrue
@@ -111,10 +129,9 @@ Public Sub BuildControlPanel()
         ActiveWindow.DisplayGridlines = False
         ActiveWindow.DisplayHeadings = False
     End If
-    RefreshPanelState
     CheckPanelMacros actions
     Application.ScreenUpdating = prevScreen
-    MsgBox "Control panel updated: " & count & " buttons (" & columns & " per row).", vbInformation, "Done"
+    MsgBox "Control panel updated: " & count & " buttons.", vbInformation, "Done"
     Exit Sub
 BuildError:
     errorText = CStr(Err.Number) & " : " & Err.Description
@@ -122,13 +139,12 @@ BuildError:
     MsgBox "Panel build failed: " & errorText, vbExclamation, "Error"
 End Sub
 
+' Re-links every button to its macro (the workbook name is part of the link, so this
+' is needed after "Save As" / renaming). Called by modCollector after a collection.
 Public Sub RefreshPanelState()
-    Dim ws As Worksheet, btn As Shape, actions As Variant, item As Variant
-    Dim i As Long, enabled As Boolean, resultsExist As Boolean, stage As Long, stepNo As Long
+    Dim ws As Worksheet, btn As Shape, actions As Variant, item As Variant, i As Long
     Set ws = PanelSheet()
     If ws Is Nothing Then Exit Sub
-    resultsExist = PanelResultsExist()
-    stage = TermWorkflowStage01()
     actions = PanelActions()
     For i = LBound(actions) To UBound(actions)
         item = actions(i)
@@ -137,54 +153,8 @@ Public Sub RefreshPanelState()
         Set btn = ws.Shapes(CStr(item(0)))
         Err.Clear
         On Error GoTo 0
-        If Not btn Is Nothing Then
-            enabled = True
-            If CBool(item(3)) Then enabled = resultsExist
-            stepNo = WorkflowStep01(CStr(item(0)))
-            If stepNo > 1 Then enabled = (stage >= stepNo - 1)
-            With btn
-                .Fill.Solid
-                If enabled Then
-                    .Fill.ForeColor.RGB = CLng(item(4))
-                    .Line.ForeColor.RGB = CLng(item(4))
-                    .TextFrame2.TextRange.Font.Fill.ForeColor.RGB = RGB(255, 255, 255)
-                    If stepNo > 0 Then
-                        .OnAction = PanelMacroAction("RunTermStep01")
-                    Else
-                        .OnAction = PanelMacroAction(CStr(item(2)))
-                    End If
-                Else
-                    .Fill.ForeColor.RGB = RGB(220, 220, 220)
-                    .Line.ForeColor.RGB = RGB(180, 180, 180)
-                    .TextFrame2.TextRange.Font.Fill.ForeColor.RGB = RGB(120, 120, 120)
-                    If stepNo > 0 Then
-                        .OnAction = PanelMacroAction("RunTermStep01")
-                    Else
-                        .OnAction = PanelMacroAction("ResultsGuard")
-                    End If
-                End If
-            End With
-        End If
+        If Not btn Is Nothing Then btn.OnAction = PanelMacroAction(CStr(item(2)))
     Next i
-End Sub
-
-Public Sub ResultsGuard()
-    MsgBox "Run First Term Results first to generate " & RESULTS_FILE & ".", _
-           vbExclamation, "Step 1 Required"
-End Sub
-
-' Compatibility with buttons created by earlier panel versions.
-Public Sub AverageGuard()
-    ResultsGuard
-End Sub
-Public Sub FirstTermOnlyGuard()
-    ResultsGuard
-End Sub
-Public Sub SecondTermOnlyGuard()
-    ResultsGuard
-End Sub
-Public Sub ThirdTermOnlyGuard()
-    ResultsGuard
 End Sub
 
 Private Function PanelSheet() As Worksheet
@@ -193,16 +163,11 @@ Private Function PanelSheet() As Worksheet
     On Error GoTo 0
 End Function
 
-Private Function PanelResultsExist() As Boolean
-    If Len(ThisWorkbook.Path) = 0 Then Exit Function
-    If LCase$(Left$(ThisWorkbook.Path, 4)) = "http" Then Exit Function
-    PanelResultsExist = WfFileExists(WfResolvePath(RESULTS_FILE))
-End Function
-
 Private Function PanelMacroAction(ByVal macroName As String) As String
     PanelMacroAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!" & macroName
 End Function
 
+' Warns about any module that has not been imported yet.
 Private Sub CheckPanelMacros(ByVal actions As Variant)
     Dim i As Long, item As Variant, missing As String
     For i = LBound(actions) To UBound(actions)
@@ -246,188 +211,158 @@ AccessDenied:
     Err.Clear
 End Function
 
-Private Function WorkflowStep01(ByVal shapeName As String) As Long
-    Select Case shapeName
-    Case "btnDataTransfer": WorkflowStep01 = 1
-    Case "btnStreamPreferences": WorkflowStep01 = 2
-    Case "btnFirstTermOrientation": WorkflowStep01 = 3
-    Case "btnExportOrientationResults": WorkflowStep01 = 4
-    End Select
-End Function
+'==============================================================================
+'  Progress table of "Term 01 Analysis" (called by modBiuldAnalysisfilesBuildAll01)
+'  It is written on the ControlPanel sheet, under the buttons:
+'    Panel_Reset   lists every file to build (status "Waiting")
+'    Panel_Update  idx = position of the file, state 1 = running, 2 = done, 3 = failed
+'    Panel_Finish  one summary line
+'    Panel_Show    brings the panel sheet to the front
+'  Every procedure is silent when the sheet is missing or protected.
+'==============================================================================
 
-Private Function WorkflowRead01(ByVal key As String) As String
-    Dim s As String
-    On Error GoTo Missing
-    s = ThisWorkbook.Names("_Term01_" & key).RefersTo
-    If Left$(s, 2) = "=" & Chr$(34) And Right$(s, 1) = Chr$(34) Then
-        WorkflowRead01 = Replace(Mid$(s, 3, Len(s) - 3), Chr$(34) & Chr$(34), Chr$(34))
-    End If
-Missing:
-End Function
-
-Private Sub WorkflowWrite01(ByVal key As String, ByVal value As String)
+Private Function ProgressTop(ByVal ws As Worksheet) As Long
+    Dim shp As Shape, r As Long, maxRow As Long
+    maxRow = 2
     On Error Resume Next
-    ThisWorkbook.Names("_Term01_" & key).Delete
-    Err.Clear
+    For Each shp In ws.Shapes
+        r = shp.BottomRightCell.Row
+        If r > maxRow Then maxRow = r
+    Next shp
     On Error GoTo 0
-    ThisWorkbook.Names.Add Name:="_Term01_" & key, RefersTo:="=" & Chr$(34) & Replace(value, Chr$(34), Chr$(34) & Chr$(34)) & Chr$(34), Visible:=False
-End Sub
-
-' ---- Work-folder path helpers: the files produced by the tool live in the work folder ----
-' (the producing modules create the folder; this module only looks files up)
-Private Function WfFolderName() As String
-    Dim parts() As String, i As Long, t As String
-    parts = Split(WF_FOLDER_CODES, " ")
-    For i = 0 To UBound(parts)
-        t = t & ChrW(CLng("&H" & parts(i)))
-    Next i
-    WfFolderName = t
+    ProgressTop = maxRow + 2
 End Function
 
-Private Function WfResolvePath(ByVal fileName As String) As String
-    Select Case LCase$(fileName)
-        Case LCase$(GUIDANCE_FILE), LCase$(EXPORT_FILE), LCase$(RESULTS_FILE)
-            WfResolvePath = ThisWorkbook.Path & Application.PathSeparator & WfFolderName() & Application.PathSeparator & fileName
-        Case Else
-            WfResolvePath = ThisWorkbook.Path & Application.PathSeparator & fileName
-    End Select
-End Function
-
-' FileSystemObject is Unicode-safe; Dir is ANSI and can fail on Arabic folder names.
-Private Function WfFileExists(ByVal p As String) As Boolean
-    WfFileExists = CreateObject("Scripting.FileSystemObject").FileExists(p)
-End Function
-
-Private Function WorkflowFile01(ByVal fileName As String, Optional ByVal fullHash As Boolean = False) As String
-    Dim path As String, stamp As String, h As Integer, isOpen As Boolean
-    Dim size As Long, remaining As Long, block As Long, data() As Byte, j As Long
-    Dim a As Long, b As Long, fso As Object, fil As Object
-    On Error GoTo Missing
-    If Len(ThisWorkbook.Path) = 0 Then Exit Function
-    path = WfResolvePath(fileName)
-    Set fso = CreateObject("Scripting.FileSystemObject")   ' Unicode-safe (the work folder name is Arabic)
-    Set fil = fso.GetFile(path)
-    size = fil.Size
-    stamp = CStr(size) & "|" & Format$(fil.DateLastModified, "yyyymmddhhnnss")
-    If Not fullHash Then
-        WorkflowFile01 = stamp
-        Exit Function
-    End If
-    ' Hash source bytes around collection: an unchanged old file cannot unlock transfer after cancellation.
-    h = FreeFile
-    Open path For Binary Access Read Shared As #h
-    isOpen = True
-    remaining = LOF(h): a = 1
-    Do While remaining > 0
-        block = remaining
-        If block > 32768 Then block = 32768
-        ReDim data(0 To block - 1)
-        Get #h, , data
-        For j = 0 To block - 1
-            a = (a + CLng(data(j))) Mod 65521
-            b = (b + a) Mod 65521
-        Next j
-        remaining = remaining - block
-    Loop
-    Close #h
-    isOpen = False
-    WorkflowFile01 = stamp & "|" & CStr(a) & ":" & CStr(b)
-    Exit Function
-Missing:
+Public Sub Panel_Reset(ByVal map As Object)
+    Dim ws As Worksheet, key As Variant, r As Long, n As Long
+    Set ws = PanelSheet()
+    If ws Is Nothing Then Exit Sub
     On Error Resume Next
-    If isOpen Then Close #h
-    WorkflowFile01 = ""
-End Function
-
-Private Function TermWorkflowStage01() As Long
-    Dim stage As Long, s As String
-    s = WorkflowRead01("Stage")
-    If IsNumeric(s) Then
-        If Val(s) >= 0 And Val(s) <= 4 Then stage = CLng(s)
+    m_top = ProgressTop(ws)
+    With ws.Range(ws.Rows(m_top), ws.Rows(m_top + 120)).Columns("B:K")
+        .UnMerge
+        .Clear
+    End With
+    With ws.Range(ws.Cells(m_top, 2), ws.Cells(m_top, 11))
+        .Merge
+        .Value = "Term 01 Analysis - progress"
+        .Font.Name = "Segoe UI"
+        .Font.Size = 13
+        .Font.Bold = True
+        .Font.Color = RGB(255, 255, 255)
+        .Interior.Color = RGB(28, 55, 103)
+        .HorizontalAlignment = xlCenter
+        .VerticalAlignment = xlCenter
+    End With
+    ws.Rows(m_top).RowHeight = 26
+    PanelSummary ws, "Running ...", False
+    ' column headers
+    ws.Cells(m_top + 2, 2).Value = "#"
+    ws.Range(ws.Cells(m_top + 2, 3), ws.Cells(m_top + 2, 5)).Merge
+    ws.Cells(m_top + 2, 3).Value = "File"
+    ws.Cells(m_top + 2, 6).Value = "State"
+    ws.Cells(m_top + 2, 7).Value = "Sec."
+    ws.Range(ws.Cells(m_top + 2, 8), ws.Cells(m_top + 2, 11)).Merge
+    ws.Cells(m_top + 2, 8).Value = "Result"
+    With ws.Range(ws.Cells(m_top + 2, 2), ws.Cells(m_top + 2, 11))
+        .Font.Name = "Segoe UI"
+        .Font.Bold = True
+        .Interior.Color = RGB(221, 228, 240)
+        .HorizontalAlignment = xlCenter
+    End With
+    ' one row per file
+    If Not map Is Nothing Then
+        For Each key In map.Keys
+            n = n + 1
+            r = m_top + 2 + n
+            ws.Cells(r, 2).Value = n
+            ws.Range(ws.Cells(r, 3), ws.Cells(r, 5)).Merge
+            ws.Cells(r, 3).Value = CStr(key)
+            ws.Cells(r, 6).Value = "Waiting"
+            ws.Range(ws.Cells(r, 8), ws.Cells(r, 11)).Merge
+            PanelRowStyle ws, r, RGB(245, 245, 245), RGB(110, 110, 110)
+        Next key
     End If
-    If stage < 0 Or stage > 4 Then stage = 0
-    If stage >= 1 Then
-        s = WorkflowFile01("Term01Guidance.xlsx")
-        If Len(s) = 0 Or s <> WorkflowRead01("Guidance") Then stage = 0
-    End If
-    If stage >= 2 Then
-        s = WorkflowFile01("StreamPreferences01.xlsx")
-        If Len(s) = 0 Or s <> WorkflowRead01("Wishes") Then stage = 1
-    End If
-    If stage >= 4 Then
-        s = WorkflowFile01("OrientationResults01.xlsx")
-        If Len(s) = 0 Or s <> WorkflowRead01("Export") Then stage = 3
-    End If
-    TermWorkflowStage01 = stage
-End Function
-
-Private Sub WorkflowSaveStage01(ByVal stage As Long)
-    WorkflowWrite01 "Guidance", WorkflowFile01("Term01Guidance.xlsx")
-    WorkflowWrite01 "Wishes", WorkflowFile01("StreamPreferences01.xlsx")
-    WorkflowWrite01 "Export", WorkflowFile01("OrientationResults01.xlsx")
-    WorkflowWrite01 "Stage", CStr(stage)
+    On Error GoTo 0
 End Sub
 
-Private Sub WorkflowGuard01(ByVal stepNo As Long)
-    Dim previous As String
-    Select Case stepNo
-    Case 2: previous = "Data Transfer"
-    Case 3: previous = "Stream Preferences"
-    Case 4: previous = "First Term Orientation"
+Public Sub Panel_Update(ByVal idx As Long, ByVal state As Long, ByVal info As String, ByVal secs As Double)
+    Dim ws As Worksheet, r As Long, fillC As Long, fontC As Long, caption As String
+    Set ws = PanelSheet()
+    If ws Is Nothing Then Exit Sub
+    If m_top = 0 Then Exit Sub
+    On Error Resume Next
+    r = m_top + 2 + idx
+    Select Case state
+        Case 1: caption = "Running": fillC = RGB(221, 235, 247): fontC = RGB(31, 78, 121)
+        Case 2: caption = "Done":    fillC = RGB(226, 239, 218): fontC = RGB(56, 87, 35)
+        Case Else: caption = "Failed": fillC = RGB(252, 228, 214): fontC = RGB(156, 0, 6)
     End Select
-    MsgBox "Complete '" & previous & "' successfully before this action.", vbExclamation, "Required previous step"
+    ws.Cells(r, 6).Value = caption
+    If state <> 1 Then ws.Cells(r, 7).Value = Format$(secs, "0.0")
+    If Len(info) > 0 Or state <> 1 Then ws.Cells(r, 8).Value = Left$(info, 140)
+    PanelRowStyle ws, r, fillC, fontC
+    ws.Cells(r, 8).HorizontalAlignment = xlLeft
+    On Error GoTo 0
 End Sub
 
-Public Sub RunTermStep01()
-    Dim caller As Variant, stepNo As Long, stage As Long, actions As Variant, item As Variant
-    Dim i As Long, macro As String, resultFunction As String, succeeded As Boolean
-    Dim errorText As String
-    If m_workflowBusy Then Exit Sub
-    caller = Application.Caller
-    If VarType(caller) <> vbString Then
-        MsgBox "Use the ordered buttons on ControlPanel.", vbExclamation, "Term 01 guidance"
-        Exit Sub
+Public Sub Panel_Finish(ByVal okCount As Long, ByVal total As Long, ByVal secs As Double, ByVal note As String)
+    Dim ws As Worksheet, txt As String
+    Set ws = PanelSheet()
+    If ws Is Nothing Then Exit Sub
+    On Error Resume Next
+    If m_top = 0 Then m_top = ProgressTop(ws)
+    If Len(note) > 0 Then
+        txt = Left$(note, 200)
+        PanelSummary ws, txt, True
+    Else
+        txt = "Created " & okCount & " / " & total & "   (" & Format$(secs, "0") & " s)"
+        PanelSummary ws, txt, (okCount < total)
     End If
-    stepNo = WorkflowStep01(CStr(caller))
-    If stepNo = 0 Then Exit Sub
-    stage = TermWorkflowStage01()
-    If stage < stepNo - 1 Then
-        WorkflowGuard01 stepNo
-        RefreshPanelState
-        Exit Sub
-    End If
-    On Error GoTo Failed
-    If ThisWorkbook.ReadOnly Then Err.Raise vbObjectError + 810, , "The tool workbook is read-only."
-    m_workflowBusy = True
-    ' Retrying an earlier action invalidates every later completion, even if it fails or is cancelled.
-    WorkflowSaveStage01 stepNo - 1
-    RefreshPanelState
-    actions = PanelActions()
-    For i = LBound(actions) To UBound(actions)
-        item = actions(i)
-        If CStr(item(0)) = CStr(caller) Then
-            macro = CStr(item(2))
-            Exit For
+    On Error GoTo 0
+End Sub
+
+Public Sub Panel_Show()
+    Dim ws As Worksheet
+    Set ws = PanelSheet()
+    If ws Is Nothing Then Exit Sub
+    On Error Resume Next
+    ThisWorkbook.Activate
+    ws.Activate
+    ws.Range("A1").Select
+    On Error GoTo 0
+End Sub
+
+Private Sub PanelSummary(ByVal ws As Worksheet, ByVal txt As String, ByVal isProblem As Boolean)
+    With ws.Range(ws.Cells(m_top + 1, 2), ws.Cells(m_top + 1, 11))
+        .UnMerge
+        .Merge
+        .Value = txt
+        .Font.Name = "Segoe UI"
+        .Font.Size = 11
+        .Font.Bold = True
+        .HorizontalAlignment = xlCenter
+        .VerticalAlignment = xlCenter
+        If isProblem Then
+            .Interior.Color = RGB(252, 228, 214)
+            .Font.Color = RGB(156, 0, 6)
+        Else
+            .Interior.Color = RGB(226, 239, 218)
+            .Font.Color = RGB(56, 87, 35)
         End If
-    Next i
-    If Len(macro) = 0 Then Err.Raise vbObjectError + 811, , "Panel action not found."
-    Application.Run PanelMacroAction(macro)
-    Select Case stepNo
-    Case 1: resultFunction = "modTransfer01.Transfer01Succeeded"
-    Case 2: resultFunction = "modStreamPreferences01.Preferences01Succeeded"
-    Case 3: resultFunction = "modOrientation01.Orientation01Succeeded"
-    Case 4: resultFunction = "modOrientationResults01.OrientationResults01Succeeded"
-    End Select
-    If Len(resultFunction) > 0 Then succeeded = CBool(Application.Run(PanelMacroAction(resultFunction)))
-    If succeeded Then WorkflowSaveStage01 stepNo
-Finished:
-    m_workflowBusy = False
-    On Error Resume Next
-    RefreshPanelState
-    On Error GoTo 0
-    If Len(errorText) > 0 Then MsgBox errorText, vbExclamation, "Term 01 guidance"
-    Exit Sub
-Failed:
-    errorText = Err.Description
-    Resume Finished
+    End With
+    ws.Rows(m_top + 1).RowHeight = 22
+End Sub
+
+Private Sub PanelRowStyle(ByVal ws As Worksheet, ByVal r As Long, ByVal fillC As Long, ByVal fontC As Long)
+    With ws.Range(ws.Cells(r, 2), ws.Cells(r, 11))
+        .Font.Name = "Segoe UI"
+        .Font.Size = 10
+        .Font.Color = fontC
+        .Interior.Color = fillC
+        .VerticalAlignment = xlCenter
+        .HorizontalAlignment = xlCenter
+        .Borders.LineStyle = xlContinuous
+        .Borders.Color = RGB(200, 200, 200)
+    End With
 End Sub

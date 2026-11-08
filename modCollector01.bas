@@ -5,10 +5,15 @@ Option Explicit
 ' Module  : modCollector
 ' Purpose : 1) Auto-convert (.xls, .xlsb, .xlsm) inside \Source01\ to .xlsx
 '              (originals are moved to \Source01\_Original, never deleted)
-'           2) Collect all source files into Term01Results.xlsx as Dynamic Tables;
+'           2) Collect the source files into ONE workbook named "first term results"
+'              (Arabic name stored as hex code points in RESULTS_FILE_CODES) as Dynamic Tables;
 '              the file is written INSIDE the work folder next to the tool (name stored as
 '              hex code points in WORK_FOLDER_CODES): the folder is looked up by name and
 '              created when it does not exist
+'           3) Only MARKS files are collected: from column F, row 7, the cells must be
+'              averages (numbers, or text that stands for a number - it is converted to a
+'              real number). A file whose F7 onward is text (the stream-wishes file) is
+'              skipped and listed in the report.
 ' Entry   : CollectTerm01Results()
 '==============================================================================
 
@@ -21,9 +26,14 @@ Private Const FONT_ARABIC          As String = "Arabic UI Display Light"
 Private Const FONT_NUMERIC         As String = "Bahnschrift SemiBold"
 Private Const FONT_FALLBACK        As String = "Calibri"
 Private Const ARCHIVE_FOLDER       As String = "_Original"
+Private Const FIRST_MARK_COL       As Long = 6      ' column F : first average column
+Private Const FIRST_MARK_ROW       As Long = 7      ' row 7   : first student row
 
 ' Work folder name (hex code points): looked up next to the tool, created when missing
 Private Const WORK_FOLDER_CODES    As String = "645 639 627 644 62C 629 20 628 64A 627 646 627 62A 20 627 644 641 635 644 20 30 31"
+
+' Name of the produced workbook (hex code points, ".xlsx" is added in code)
+Private Const RESULTS_FILE_CODES   As String = "646 62A 627 626 62C 20 627 644 641 635 644 20 627 644 623 648 644"
 
 Private Const PREFERRED_FONT As String = "Cairo"
 Private Const FALLBACK_FONT  As String = "Arial"
@@ -146,7 +156,7 @@ Private Sub ConvertSourceFilesToXLSX(ByVal targetFolderPath As String, _
 End Sub
 
 ' ==============================================================================
-' STEP 2: FONT CHECK & COLLECTION INTO Term01Results.xlsx
+' STEP 2: FONT CHECK & COLLECTION INTO THE RESULTS WORKBOOK
 ' ==============================================================================
 ' Checks the Windows font registry (HKLM + HKCU). If the check itself cannot run,
 ' returns True (keeps the requested font instead of forcing the fallback).
@@ -188,6 +198,76 @@ Private Sub SetupFonts()
     If FontExists(FONT_NUMERIC) Then g_ActiveNumericFont = FONT_NUMERIC Else g_ActiveNumericFont = FONT_FALLBACK
 End Sub
 
+' ==============================================================================
+' MARKS CHECK : averages must start at F7 (a wishes file holds text there)
+' ==============================================================================
+' Text that stands for a number ("12.5", "12,5", Arabic-Indic digits, stray spaces or
+' hidden direction marks) -> True and the value in d. Any real text -> False.
+Private Function TextToMark(ByVal s As String, ByRef d As Double) As Boolean
+    Dim i As Long, code As Long, res As String
+    Dim digits As Long, dots As Long
+
+    For i = 1 To Len(s)
+        code = AscW(Mid$(s, i, 1))
+        If code < 0 Then code = code + 65536
+        Select Case code
+            Case 48 To 57
+                res = res & ChrW(code): digits = digits + 1
+            Case &H660 To &H669
+                res = res & ChrW(code - &H660 + 48): digits = digits + 1
+            Case &H6F0 To &H6F9
+                res = res & ChrW(code - &H6F0 + 48): digits = digits + 1
+            Case 46, 44, &H66B
+                res = res & ".": dots = dots + 1
+            Case 45, &H2212
+                If Len(res) > 0 Then Exit Function
+                res = "-"
+            Case 43
+                If Len(res) > 0 Then Exit Function
+            Case 32, 160, &H200E, &H200F, &H202A To &H202E, &HFEFF&
+                ' blank / hidden direction mark: ignored
+            Case Else
+                Exit Function
+        End Select
+    Next i
+    If digits = 0 Or dots > 1 Then Exit Function
+    d = Val(res)                        ' Val always reads "." (independent of the regional settings)
+    TextToMark = True
+End Function
+
+' Scans the score block (column F onward, from row 7). Text that stands for a number is
+' converted IN the array to a real number ("convert to number"). Returns how many cells
+' are numbers and how many are real texts.
+Private Sub PrepareMarksBlock(ByRef arr As Variant, ByRef numCount As Long, ByRef textCount As Long)
+    Dim r As Long, c As Long, v As Variant, d As Double, t As String
+
+    numCount = 0: textCount = 0
+    If UBound(arr, 2) < FIRST_MARK_COL Then Exit Sub
+    For r = FIRST_MARK_ROW - DATA_START_ROW + 1 To UBound(arr, 1)      ' array row 1 = header row
+        For c = FIRST_MARK_COL To UBound(arr, 2)
+            v = arr(r, c)
+            Select Case VarType(v)
+                Case vbEmpty, vbNull
+                    ' empty cell
+                Case vbDouble, vbSingle, vbInteger, vbLong, vbCurrency, vbDecimal
+                    numCount = numCount + 1
+                Case vbString
+                    t = Trim$(Replace(CStr(v), ChrW(160), " "))
+                    If Len(t) > 0 Then
+                        If TextToMark(CStr(v), d) Then
+                            arr(r, c) = d
+                            numCount = numCount + 1
+                        Else
+                            textCount = textCount + 1
+                        End If
+                    End If
+                Case Else
+                    textCount = textCount + 1        ' dates, booleans, errors
+            End Select
+        Next c
+    Next r
+End Sub
+
 Public Function ProcessSingleSourceFile(ByRef wbResult As Workbook, _
                                         ByVal SourcePath As String, _
                                         ByVal fileName As String, _
@@ -199,6 +279,7 @@ Public Function ProcessSingleSourceFile(ByRef wbResult As Workbook, _
     Dim idLastCol As Long, lastFind As Range
     Dim tbl As ListObject, tblRange As Range, seenHeaders As Object
     Dim h As Long, headerText As String, genCounter As Long
+    Dim numCount As Long, textCount As Long
 
     ProcessSingleSourceFile = False
     ReasonOut = ""
@@ -237,6 +318,28 @@ Public Function ProcessSingleSourceFile(ByRef wbResult As Workbook, _
         wbSource.Close SaveChanges:=False: Exit Function
     End If
 
+    ' ---- Read source data (before any sheet is created in the result workbook)
+    On Error Resume Next
+    DataArr = wsSource.Range(wsSource.Cells(DATA_START_ROW, 1), wsSource.Cells(LastRow, LastCol)).Value
+    errNum = Err.Number: errDesc = Err.Description: Err.Clear
+    On Error GoTo EH
+
+    If errNum <> 0 Or Not IsArray(DataArr) Then
+        ReasonOut = "DATA_READ_FAILED | " & errDesc
+        wbSource.Close SaveChanges:=False
+        Exit Function
+    End If
+
+    ' ---- Marks files only: averages must start at F7. Text that stands for a number is
+    '      converted to a real number; a file whose F7 onward is text (wishes file) is skipped.
+    PrepareMarksBlock DataArr, numCount, textCount
+    If numCount = 0 Or numCount <= textCount Then
+        ReasonOut = "NOT_A_MARKS_FILE | from F" & FIRST_MARK_ROW & " onward the cells are text, not averages" & _
+                    " (numbers: " & numCount & ", texts: " & textCount & ")"
+        wbSource.Close SaveChanges:=False
+        Exit Function
+    End If
+
     On Error Resume Next
     Set wsResult = wbResult.Sheets.Add(After:=wbResult.Sheets(wbResult.Sheets.Count))
     errNum = Err.Number: errDesc = Err.Description: Err.Clear
@@ -252,19 +355,6 @@ Public Function ProcessSingleSourceFile(ByRef wbResult As Workbook, _
     On Error GoTo EH
 
     wsResult.DisplayRightToLeft = True
-
-    ' ---- Read source data
-    On Error Resume Next
-    DataArr = wsSource.Range(wsSource.Cells(DATA_START_ROW, 1), wsSource.Cells(LastRow, LastCol)).Value
-    errNum = Err.Number: errDesc = Err.Description: Err.Clear
-    On Error GoTo EH
-
-    If errNum <> 0 Or Not IsArray(DataArr) Then
-        ReasonOut = "DATA_READ_FAILED | " & errDesc
-        wbSource.Close SaveChanges:=False
-        wsResult.Delete
-        Exit Function
-    End If
 
     lastDataRow = 1 + UBound(DataArr, 1)     ' header at row 2 + data rows
 
@@ -429,13 +519,22 @@ End Sub
 ' ==============================================================================
 ' MAIN ENTRY POINT (Button 1)
 ' ==============================================================================
-Private Function WorkFolderName() As String
+Private Function HexText(ByVal codes As String) As String
     Dim parts() As String, i As Long, t As String
-    parts = Split(WORK_FOLDER_CODES, " ")
+    parts = Split(codes, " ")
     For i = 0 To UBound(parts)
         t = t & ChrW(CLng("&H" & parts(i)))
     Next i
-    WorkFolderName = t
+    HexText = t
+End Function
+
+Private Function WorkFolderName() As String
+    WorkFolderName = HexText(WORK_FOLDER_CODES)
+End Function
+
+' File name of the produced workbook (Arabic name from hex code points + .xlsx)
+Private Function ResultsFileName() As String
+    ResultsFileName = HexText(RESULTS_FILE_CODES) & ".xlsx"
 End Function
 
 ' Finds the work folder next to the tool by NAME, creates it when missing. Returns its path
@@ -482,7 +581,7 @@ Public Sub CollectTerm01Results()
         MsgBox "The work folder could not be created:" & vbCrLf & _
                ThisWorkbook.Path & "\" & WorkFolderName(), vbExclamation, "Error": Exit Sub
     End If
-    outPath = outDir & "Term01Results.xlsx"
+    outPath = outDir & ResultsFileName()
 
     oldCalc = Application.Calculation
     oldSec = Application.AutomationSecurity
@@ -496,7 +595,7 @@ Public Sub CollectTerm01Results()
     ' 1) Silent auto-conversion inside \Source01\ first
     ConvertSourceFilesToXLSX srcPath, convTotal, convSuccess, convFailed
 
-    ' 2) Collect all files into Term01Results.xlsx
+    ' 2) Collect the marks files into the results workbook
     Set wbResult = Workbooks.Add
     Do While wbResult.Sheets.Count > 1: wbResult.Sheets(wbResult.Sheets.Count).Delete: Loop
 
