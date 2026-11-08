@@ -5,7 +5,7 @@ Option Explicit
 ' Module  : modBiuldAnalysisfilesCommon01
 ' Purpose : Shared constants, text helpers, fonts, cell styles and the
 '           "discover what is inside the Data sheet" routine used by the Term 01
-'           modules (Data01, Analysis01, Compaire01, CartTec01).
+'           modules (Data01, Analysis01, Compare01, CartTec01).
 '==============================================================================
 
 ' ---- sheet / table names
@@ -14,7 +14,7 @@ Public Const DATA_TABLE As String = "Data"
 Public Const DATA_HDR_ROW As Long = 6
 Public Const DATA_FIRST_ROW As Long = 7
 Public Const ANALYSIS_SHEET As String = "Analysis01"
-Public Const COMPARE_SHEET As String = "AnalyseCompaire"
+Public Const COMPARE_SHEET As String = "AnalyseCompare"
 Public Const CART_SHEET As String = "Cart_Tec"
 
 ' ---- number formats
@@ -199,7 +199,7 @@ End Sub
 
 ' Name of the output folder (first term results)
 Public Function OutputFolderName() As String
-    OutputFolderName = ArT("646 62A 627 626 62C 20 627 644 641 635 644 20 627 644 623 648 644")
+    OutputFolderName = ArT("645 639 627 644 62C 629 20 628 64A 627 646 627 62A 20 627 644 641 635 644 20 30 31")      ' the work folder (same name in every module)
 End Function
 
 Private Function PickFont(ByVal ws As Worksheet, ParamArray names() As Variant) As String

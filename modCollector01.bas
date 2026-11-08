@@ -5,7 +5,10 @@ Option Explicit
 ' Module  : modCollector
 ' Purpose : 1) Auto-convert (.xls, .xlsb, .xlsm) inside \Source01\ to .xlsx
 '              (originals are moved to \Source01\_Original, never deleted)
-'           2) Collect all source files into Term01Results.xlsx as Dynamic Tables
+'           2) Collect all source files into Term01Results.xlsx as Dynamic Tables;
+'              the file is written INSIDE the work folder next to the tool (name stored as
+'              hex code points in WORK_FOLDER_CODES): the folder is looked up by name and
+'              created when it does not exist
 ' Entry   : CollectTerm01Results()
 '==============================================================================
 
@@ -18,6 +21,9 @@ Private Const FONT_ARABIC          As String = "Arabic UI Display Light"
 Private Const FONT_NUMERIC         As String = "Bahnschrift SemiBold"
 Private Const FONT_FALLBACK        As String = "Calibri"
 Private Const ARCHIVE_FOLDER       As String = "_Original"
+
+' Work folder name (hex code points): looked up next to the tool, created when missing
+Private Const WORK_FOLDER_CODES    As String = "645 639 627 644 62C 629 20 628 64A 627 646 627 62A 20 627 644 641 635 644 20 30 31"
 
 Private Const PREFERRED_FONT As String = "Cairo"
 Private Const FALLBACK_FONT  As String = "Arial"
@@ -423,10 +429,35 @@ End Sub
 ' ==============================================================================
 ' MAIN ENTRY POINT (Button 1)
 ' ==============================================================================
+Private Function WorkFolderName() As String
+    Dim parts() As String, i As Long, t As String
+    parts = Split(WORK_FOLDER_CODES, " ")
+    For i = 0 To UBound(parts)
+        t = t & ChrW(CLng("&H" & parts(i)))
+    Next i
+    WorkFolderName = t
+End Function
+
+' Finds the work folder next to the tool by NAME, creates it when missing. Returns its path
+' with a trailing separator, or "" when it cannot be created. FileSystemObject is
+' Unicode-safe (Dir / MkDir are ANSI and can fail on Arabic folder names).
+Private Function EnsureWorkFolder() As String
+    Dim fso As Object, p As String
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    p = ThisWorkbook.Path & "\" & WorkFolderName()
+    If Not fso.FolderExists(p) Then
+        On Error Resume Next
+        fso.CreateFolder p
+        Err.Clear
+        On Error GoTo 0
+    End If
+    If fso.FolderExists(p) Then EnsureWorkFolder = p & "\"
+End Function
+
 Public Sub CollectTerm01Results()
     Dim wbResult As Workbook
     Dim copied As Long, skipped As Long, skippedList As String, report As String
-    Dim srcPath As String, outPath As String, failMsg As String
+    Dim srcPath As String, outPath As String, outDir As String, failMsg As String
     Dim convTotal As Long, convSuccess As Long, convFailed As Long
     Dim oldCalc As Long, oldSec As Long
 
@@ -440,11 +471,18 @@ Public Sub CollectTerm01Results()
     End If
 
     srcPath = ThisWorkbook.Path & "\Source01\"
-    outPath = ThisWorkbook.Path & "\Term01Results.xlsx"
 
     If Dir(srcPath, vbDirectory) = "" Then
         MsgBox "Source01 folder not found:" & vbCrLf & srcPath, vbExclamation, "Error": Exit Sub
     End If
+
+    ' work folder: found by name, created when it does not exist
+    outDir = EnsureWorkFolder()
+    If outDir = "" Then
+        MsgBox "The work folder could not be created:" & vbCrLf & _
+               ThisWorkbook.Path & "\" & WorkFolderName(), vbExclamation, "Error": Exit Sub
+    End If
+    outPath = outDir & "Term01Results.xlsx"
 
     oldCalc = Application.Calculation
     oldSec = Application.AutomationSecurity
@@ -466,7 +504,8 @@ Public Sub CollectTerm01Results()
 
     If copied > 0 Then
         If wbResult.Sheets.Count > 1 Then
-            If Left(wbResult.Sheets(1).Name, 5) = "Sheet" And wbResult.Sheets(1).UsedRange.Cells.Count = 1 Then wbResult.Sheets(1).Delete
+            ' the empty default sheet (its name depends on the Excel language) is removed
+            If wbResult.Sheets(1).UsedRange.Cells.Count = 1 And IsEmpty(wbResult.Sheets(1).Range("A1").Value2) Then wbResult.Sheets(1).Delete
         End If
         wbResult.SaveAs fileName:=outPath, FileFormat:=xlOpenXMLWorkbook
     End If
@@ -492,7 +531,7 @@ CleanExit:
              "(originals moved to Source01\" & ARCHIVE_FOLDER & ")" & vbCrLf & vbCrLf & _
              "--- 2. Data Collection ---" & vbCrLf & _
              "Copied files : " & copied & vbCrLf & "Skipped files: " & skipped & vbCrLf & vbCrLf & _
-             "Output: Term01Results.xlsx"
+             "Output: " & outPath
 
     If failMsg <> "" Then report = report & vbCrLf & vbCrLf & "ERROR: " & failMsg
     If skipped > 0 Then report = report & vbCrLf & vbCrLf & "Skipped / empty workbooks:" & vbCrLf & skippedList

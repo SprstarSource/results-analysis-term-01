@@ -6,6 +6,11 @@ Private m_workflowBusy As Boolean
 ' Import only the matching term panel into each independent tool workbook.
 Private Const PANEL_SHEET As String = "ControlPanel"
 Private Const RESULTS_FILE As String = "Term01Results.xlsx"
+Private Const GUIDANCE_FILE As String = "Term01Guidance.xlsx"
+Private Const EXPORT_FILE As String = "OrientationResults01.xlsx"
+
+' Work folder name (hex code points): Term01Results.xlsx, Term01Guidance.xlsx and OrientationResults01.xlsx live in it
+Private Const WF_FOLDER_CODES As String = "645 639 627 644 62C 629 20 628 64A 627 646 627 62A 20 627 644 641 635 644 20 30 31"
 Private Const BUTTON_WIDTH As Double = 164
 Private Const BUTTON_HEIGHT As Double = 54
 Private Const BUTTON_GAP As Double = 12
@@ -13,8 +18,7 @@ Private Const BUTTON_GAP As Double = 12
 Private Function PanelActions() As Variant
     PanelActions = Array( _
         Array("btnCollect", "First Term Results", "CollectTerm01Results", False, &H60AE27), _
-        Array("btnDistribute", "First Term Analysis", "DistributeDataFromTerm01Results", False, &HB98029), _
-        Array("btnClearData", "Clear Tables", "ClearAllTargetFilesData01", False, &H2050C0), _
+        Array("btnTerm01Analysis", "Term 01 Analysis", "modBiuldAnalysisfilesBuildAll01.Build_All", False, &HB98029), _
         Array("btnExamen", "Examen Analysis", "modExamenAnalysis01.Run_ExamenAnalysis01", False, &HA05568), _
         Array("btnStreamPreferences", "Stream Preferences", "modStreamPreferences01.Run_StreamPreferences01", False, &HA05568), _
         Array("btnDataTransfer", "Data Transfer", "modTransfer01.Run_Transfer01", False, &H60AE27), _
@@ -170,9 +174,6 @@ Public Sub ResultsGuard()
 End Sub
 
 ' Compatibility with buttons created by earlier panel versions.
-Public Sub DistributeGuard()
-    ResultsGuard
-End Sub
 Public Sub AverageGuard()
     ResultsGuard
 End Sub
@@ -193,16 +194,9 @@ Private Function PanelSheet() As Worksheet
 End Function
 
 Private Function PanelResultsExist() As Boolean
-    Dim attrs As Long, p As String
     If Len(ThisWorkbook.Path) = 0 Then Exit Function
     If LCase$(Left$(ThisWorkbook.Path, 4)) = "http" Then Exit Function
-    p = ThisWorkbook.Path & Application.PathSeparator & RESULTS_FILE
-    On Error GoTo Missing
-    attrs = GetAttr(p)
-    PanelResultsExist = ((attrs And vbDirectory) = 0)
-    Exit Function
-Missing:
-    PanelResultsExist = False
+    PanelResultsExist = WfFileExists(WfResolvePath(RESULTS_FILE))
 End Function
 
 Private Function PanelMacroAction(ByVal macroName As String) As String
@@ -279,15 +273,42 @@ Private Sub WorkflowWrite01(ByVal key As String, ByVal value As String)
     ThisWorkbook.Names.Add Name:="_Term01_" & key, RefersTo:="=" & Chr$(34) & Replace(value, Chr$(34), Chr$(34) & Chr$(34)) & Chr$(34), Visible:=False
 End Sub
 
+' ---- Work-folder path helpers: the files produced by the tool live in the work folder ----
+' (the producing modules create the folder; this module only looks files up)
+Private Function WfFolderName() As String
+    Dim parts() As String, i As Long, t As String
+    parts = Split(WF_FOLDER_CODES, " ")
+    For i = 0 To UBound(parts)
+        t = t & ChrW(CLng("&H" & parts(i)))
+    Next i
+    WfFolderName = t
+End Function
+
+Private Function WfResolvePath(ByVal fileName As String) As String
+    Select Case LCase$(fileName)
+        Case LCase$(GUIDANCE_FILE), LCase$(EXPORT_FILE), LCase$(RESULTS_FILE)
+            WfResolvePath = ThisWorkbook.Path & Application.PathSeparator & WfFolderName() & Application.PathSeparator & fileName
+        Case Else
+            WfResolvePath = ThisWorkbook.Path & Application.PathSeparator & fileName
+    End Select
+End Function
+
+' FileSystemObject is Unicode-safe; Dir is ANSI and can fail on Arabic folder names.
+Private Function WfFileExists(ByVal p As String) As Boolean
+    WfFileExists = CreateObject("Scripting.FileSystemObject").FileExists(p)
+End Function
+
 Private Function WorkflowFile01(ByVal fileName As String, Optional ByVal fullHash As Boolean = False) As String
     Dim path As String, stamp As String, h As Integer, isOpen As Boolean
     Dim size As Long, remaining As Long, block As Long, data() As Byte, j As Long
-    Dim a As Long, b As Long
+    Dim a As Long, b As Long, fso As Object, fil As Object
     On Error GoTo Missing
     If Len(ThisWorkbook.Path) = 0 Then Exit Function
-    path = ThisWorkbook.Path & Application.PathSeparator & fileName
-    size = FileLen(path)
-    stamp = CStr(size) & "|" & Format$(FileDateTime(path), "yyyymmddhhnnss")
+    path = WfResolvePath(fileName)
+    Set fso = CreateObject("Scripting.FileSystemObject")   ' Unicode-safe (the work folder name is Arabic)
+    Set fil = fso.GetFile(path)
+    size = fil.Size
+    stamp = CStr(size) & "|" & Format$(fil.DateLastModified, "yyyymmddhhnnss")
     If Not fullHash Then
         WorkflowFile01 = stamp
         Exit Function
