@@ -2,19 +2,28 @@ Attribute VB_Name = "modStreamPreferences01"
 Option Explicit
 
 Private m_runSucceeded As Boolean
+Private m_silent As Boolean
+Private m_lastReport As String
 
 ' ============================================================
-' Preferences 01: Tecno -> Data O:P; Litr -> Data01 K:L, in Term01Guidance.xlsx
-' Matching: normalized name tokens (order-independent, so surname/name order does not matter)
-'           + birth date. If a birth date is empty on either side, a UNIQUE name match is accepted.
-' Only matched wishes are replaced. Each track invalidates its own decisions and summary.
-' Invalid/ambiguous source records are skipped; valid records continue to import.
-' Unknown or unreadable wishes never skip a pupil: they are imported as EMPTY, with a warning.
-' One final warning identifies data issues (up to 20 rows); skipped targets are not written.
+' Preferences 01: Tecno -> Data O:P; Litr -> Data01 K:L, in the guidance workbook that
+' modTransfer01 keeps in memory (never opened from disk, never saved here on success).
+' If this step cannot complete, a copy of the workbook is saved in the output folder.
+' Strict 1-to-1 Matching Rules:
+' 1. Exact 1-to-1 match with empty wish cell(s):
+'    -> Process CONTINUES, data is transferred, and empty wishes are reported.
+' 2. No match (unmatched row in the wishes file OR unmatched pupil in the guidance workbook)
+'    OR Multi-row match (duplicate/ambiguous rows in the wishes file OR in the guidance workbook)
+'    OR invalid birth dates / repeated non-empty wishes:
+'    -> Process STOPS (Preferences01Succeeded = False), target is not modified,
+'       and all mismatches/duplicates are announced in the report.
 ' ============================================================
 
-Private Const WISH_FILE As String = "StreamPreferences01.xlsx"
-Private Const WISH_SHEET As String = "Tecno"
+' The wishes file is found INSIDE Source01 by its STRUCTURE, never by its name:
+' sheets Tecno and/or Litr, headers in row 2, B name / C birth date / D wish 1 / E wish 2.
+Private Const SRC_FOLDER As String = "Source01"
+Private Const WISH_SHEET_SCIENCE As String = "Tecno"
+Private Const WISH_SHEET_ARTS As String = "Litr"
 Private Const W_FIRST_ROW As Long = 3     ' headers in row 2
 Private Const W_COL_NAME As Long = 2      ' B
 Private Const W_COL_BIRTH As Long = 3     ' C
@@ -22,45 +31,89 @@ Private Const W_COL_W1 As Long = 4        ' D
 Private Const W_COL_W2 As Long = 5        ' E
 
 Private Const DST_FILE As String = "Term01Guidance.xlsx"
-Private Const DST_SHEET As String = "Data"
-Private Const DST_TABLE As String = "Data"
 Private Const C_NAME As Long = 2
 Private Const C_BIRTH As Long = 3
-Private Const C_W1 As Long = 15
-Private Const C_W2 As Long = 16
-Private Const MAX_LIST As Long = 15
 
 Private Type WishesBatch
     Wishes As Variant
     WriteRows As Variant
     Matched As Long
+    EmptyWishCount As Long
+    UnmatchedSourceCount As Long
+    UnmatchedTargetCount As Long
+    MultiSourceCount As Long
+    MultiTargetCount As Long
+    InvalidCount As Long
+    HasFatalStop As Boolean
+    TrackActive As Boolean
     IsArts As Boolean
     Message As String
     MissingSource As Boolean
 End Type
 
+Public Sub SetSilentMode(ByVal silent As Boolean)
+    m_silent = silent
+End Sub
+
+Public Function LastReport() As String
+    LastReport = m_lastReport
+End Function
+
+Public Function Preferences01Succeeded() As Boolean
+    Preferences01Succeeded = m_runSucceeded
+End Function
+
 Public Sub Run_StreamPreferences01()
-    Dim oldScreen As Boolean, oldAlerts As Boolean, oldEvents As Boolean, stateSaved As Boolean
+    Dim stateSaved As Boolean, wasSilent As Boolean
     Dim scienceTouched As Boolean, artsTouched As Boolean
-    Dim wbW As Workbook, wbDst As Workbook, wOpened As Boolean, dOpened As Boolean
-    Dim science As WishesBatch, arts As WishesBatch, problems As Object
+    Dim wbW As Workbook, wbDst As Workbook, wOpened As Boolean, copyPath As String
+    Dim science As WishesBatch, arts As WishesBatch
+    Dim stopIssues As Object, emptyNotes As Object
     Dim ws As Worksheet, lo As ListObject, failed As Boolean, errText As String, msg As String
+    Dim hasStop As Boolean, problem As String, wishPath As String
+
+    wasSilent = m_silent
     m_runSucceeded = False
+    m_lastReport = ""
+
     On Error GoTo EH
-    oldScreen = Application.ScreenUpdating
-    oldAlerts = Application.DisplayAlerts
-    oldEvents = Application.EnableEvents
+    Application.EnableCancelKey = xlErrorHandler
+
     stateSaved = True
     Application.ScreenUpdating = False
     Application.DisplayAlerts = False
     Application.EnableEvents = False
-    Set wbW = OpenWb(WISH_FILE, True, wOpened)
-    Set wbDst = OpenWb(DST_FILE, False, dOpened)
-    If wbDst.ReadOnly Then Err.Raise vbObjectError + 2, , DST_FILE & " is open read-only."
-    Set problems = CreateObject("Scripting.Dictionary")
-    PrepareWishes wbW, wbDst, False, science, problems
-    PrepareWishes wbW, wbDst, True, arts, problems
-    If science.MissingSource And arts.MissingSource Then Err.Raise vbObjectError + 84, , "Neither 'Tecno' nor 'Litr' was found in " & WISH_FILE & ". No wishes were written."
+
+    Set wbDst = modTransfer01.GuidanceWorkbook()
+    If wbDst Is Nothing Then Err.Raise vbObjectError + 85, , "No guidance workbook is open. Run the data transfer first (Term 01 Orientation button)."
+    problem = FindWishesFile(wishPath)
+    If Len(problem) > 0 Then Err.Raise vbObjectError + 83, , problem
+    Set wbW = OpenWb(wishPath, True, wOpened)
+
+    Set stopIssues = CreateObject("Scripting.Dictionary")
+    Set emptyNotes = CreateObject("Scripting.Dictionary")
+
+    PrepareWishes wbW, wbDst, False, science, stopIssues, emptyNotes
+    PrepareWishes wbW, wbDst, True, arts, stopIssues, emptyNotes
+
+    If Not science.TrackActive And Not arts.TrackActive Then
+        Err.Raise vbObjectError + 84, , "No active student records found to match between the wishes file and the guidance workbook."
+    End If
+
+    hasStop = science.HasFatalStop Or arts.HasFatalStop Or (stopIssues.Count > 0)
+
+    msg = "Wishes file: " & Mid$(wishPath, InStrRev(wishPath, Application.PathSeparator) + 1) & vbLf & science.Message & vbLf & arts.Message
+    If emptyNotes.Count > 0 Then
+        msg = AppendDetailsList(emptyNotes, msg, "Matched rows with empty wishes (work continues): " & emptyNotes.Count)
+    End If
+
+    If hasStop Then
+        msg = AppendDetailsList(stopIssues, msg, _
+              "STOPPED - Unmatched or multi-row matches detected (" & stopIssues.Count & " issue row(s)):")
+        m_lastReport = msg
+        Err.Raise vbObjectError + 90, , msg
+    End If
+
     If science.Matched > 0 Then
         scienceTouched = True
         CheckTrackWrite wbDst, RequireWorksheet(wbDst, "Data")
@@ -69,18 +122,19 @@ Public Sub Run_StreamPreferences01()
         artsTouched = True
         CheckTrackWrite wbDst, RequireWorksheet(wbDst, "Data01")
     End If
+
     WriteWishes wbDst, science
     WriteWishes wbDst, arts
-    If science.Matched + arts.Matched > 0 Then wbDst.Save
+
     m_runSucceeded = True
-    msg = science.Message & vbLf & arts.Message
-    If problems.Count > 0 Then msg = ValidationWarnings(problems, msg)
+    ' Run on its own (not part of the orientation sequence): keep a copy so the work is not lost
+    If Not wasSilent Then msg = msg & vbLf & vbLf & "Saved to: " & modTransfer01.SaveGuidanceCopy()
+    m_lastReport = msg
+
 Done:
     On Error Resume Next
-    If wOpened Then wbW.Close SaveChanges:=False
-    If failed And dOpened Then
-        wbDst.Close SaveChanges:=False
-    ElseIf failed And Not wbDst Is Nothing Then
+    If wOpened And Not wbW Is Nothing Then wbW.Close SaveChanges:=False
+    If failed And Not wbDst Is Nothing Then
         For Each ws In wbDst.Worksheets
             If (ws.Name = "Data" And scienceTouched) Or (ws.Name = "Data01" And artsTouched) Then
                 Set lo = Nothing
@@ -88,62 +142,117 @@ Done:
                 If Not lo Is Nothing Then LockAndProtect ws, lo.DataBodyRange
             End If
         Next ws
+        ' The step did not complete: keep what was transferred so far as a saved copy
+        copyPath = ""
+        copyPath = modTransfer01.SaveGuidanceCopy()
+        If Len(copyPath) > 0 Then errText = errText & vbLf & vbLf & "A copy of the guidance workbook (without the wishes) was saved: " & copyPath
     End If
     If stateSaved Then
-        Application.EnableEvents = oldEvents
-        Application.DisplayAlerts = oldAlerts
-        Application.ScreenUpdating = oldScreen
+        Application.EnableEvents = True
+        Application.DisplayAlerts = True
+        Application.ScreenUpdating = True
     End If
+    Application.EnableCancelKey = xlInterrupt
+    m_silent = False
     On Error GoTo 0
+
     If failed Then
-        MsgBox "Wishes import failed:" & vbLf & errText, vbCritical, "Stream preferences 01"
+        m_lastReport = errText
+        If Not wasSilent Then
+            MsgBox "Wishes import stopped:" & vbLf & errText, vbCritical, "Stream preferences 01"
+        End If
     Else
-        MsgBox msg, IIf(problems.Count > 0 Or science.MissingSource Or arts.MissingSource, vbExclamation, vbInformation), "Stream preferences 01"
+        If Not wasSilent Then
+            MsgBox msg, IIf(emptyNotes.Count > 0, vbExclamation, vbInformation), "Stream preferences 01"
+        End If
     End If
     Exit Sub
+
 EH:
     m_runSucceeded = False
     failed = True
-    errText = Err.Description
-    If (scienceTouched Or artsTouched) And Not dOpened Then
-        errText = errText & vbLf & vbLf & ArtsText("failure_unsaved")
+    If Err.Number = 18 Then
+        errText = "Execution was canceled by the user."
+    Else
+        errText = Err.Description
     End If
     Resume Done
 End Sub
 
 Private Sub PrepareWishes(ByVal wbW As Workbook, ByVal wbDst As Workbook, ByVal isArts As Boolean, _
-                          ByRef batch As WishesBatch, ByVal problems As Object)
+                          ByRef batch As WishesBatch, ByVal stopIssues As Object, ByVal emptyNotes As Object)
     Dim wsW As Worksheet, wsDst As Worksheet, lo As ListObject, body As Range
     Dim sourceSheet As String, targetSheet As String, wishColumn As Long, width As Long
     Dim tv As Variant, wv As Variant, wishOut As Variant, writeRows() As Boolean
     Dim dFull As Object, dNameCnt As Object, dNameRow As Object, dSource As Object, dWritten As Object
     Dim sourceKey As String, tdk() As String
     Dim nT As Long, i As Long, r As Long, lastRow As Long, rowT As Long
-    Dim nk As String, dk As String, fk As String, reason As String, nm As String
-    Dim matched As Long, unmatched As Long, shown As Long, noWish As Long, lst As String
+    Dim nk As String, dk As String, fk As String
     Dim born As Date, location As String, firstSourceRow As Long, firstSourceIndex As Long
+    Dim firstTargetRow As Long
     Dim sourceNames() As String, sourceDates() As String, sourceOKRows() As Boolean
-    Dim sourceTargets() As Long, badTargetDate() As Boolean, nSource As Long, skippedInvalid As Long
+    Dim sourceTargets() As Long, badTargetDate() As Boolean, targetDup() As Boolean
+    Dim nSource As Long, hasTargetPupils As Boolean, hasSourceRows As Boolean
+    Dim w1Clean As Variant, w2Clean As Variant
+
     batch.IsArts = isArts
     If isArts Then
-        sourceSheet = "Litr": targetSheet = "Data01": wishColumn = 11: width = 15
+        sourceSheet = WISH_SHEET_ARTS: targetSheet = "Data01": wishColumn = 11: width = 15
     Else
-        sourceSheet = "Tecno": targetSheet = "Data": wishColumn = 15: width = 21
+        sourceSheet = WISH_SHEET_SCIENCE: targetSheet = "Data": wishColumn = 15: width = 21
     End If
+
     Set wsW = FindWorksheet(wbW, sourceSheet)
-    If wsW Is Nothing Then
+    Set wsDst = FindWorksheet(wbDst, targetSheet)
+
+    If Not wsDst Is Nothing Then
+        Set lo = GuidanceTable(wsDst, width)
+        wsDst.Calculate
+        hasTargetPupils = Not GuidanceTableIsEmpty(lo)
+    End If
+
+    If Not wsW Is Nothing Then
+        wsW.Calculate
+        lastRow = wsW.Cells(wsW.Rows.Count, W_COL_NAME).End(xlUp).Row
+        If lastRow >= W_FIRST_ROW Then
+            wv = wsW.Range(wsW.Cells(W_FIRST_ROW, 1), wsW.Cells(lastRow, W_COL_W2)).Value2
+            nSource = UBound(wv, 1)
+            For r = 1 To nSource
+                If Not BlankValue(wv(r, W_COL_NAME)) Or Not BlankValue(wv(r, W_COL_BIRTH)) Or _
+                   Not BlankValue(wv(r, W_COL_W1)) Or Not BlankValue(wv(r, W_COL_W2)) Then
+                    hasSourceRows = True
+                    Exit For
+                End If
+            Next r
+        End If
+    End If
+
+    ' If neither target nor source has students for this track, skip cleanly
+    If Not hasTargetPupils And Not hasSourceRows Then
+        batch.TrackActive = False
+        batch.Message = targetSheet & ": no pupils in track; skipped."
+        Exit Sub
+    End If
+
+    batch.TrackActive = True
+
+    ' Target has pupils, but wishes sheet is missing or empty -> fatal stop
+    If hasTargetPupils And (wsW Is Nothing Or Not hasSourceRows) Then
         batch.MissingSource = True
-        batch.Message = targetSheet & ": source sheet '" & sourceSheet & "' not found in " & wbW.Name & "; skipped, existing data kept."
+        batch.HasFatalStop = True
+        AddValidationIssue stopIssues, targetSheet, "UNMATCHED_DST(all rows - sheet '" & sourceSheet & "' missing/empty)"
+        batch.Message = targetSheet & ": wishes sheet '" & sourceSheet & "' missing or empty."
         Exit Sub
     End If
-    Set wsDst = RequireWorksheet(wbDst, targetSheet)
-    Set lo = GuidanceTable(wsDst, width)
-    wsW.Calculate
-    wsDst.Calculate
-    If GuidanceTableIsEmpty(lo) Then
-        batch.Message = targetSheet & ": no registered pupils."
+
+    ' Source has rows, but target sheet is missing or empty -> fatal stop
+    If hasSourceRows And (wsDst Is Nothing Or Not hasTargetPupils) Then
+        batch.HasFatalStop = True
+        AddValidationIssue stopIssues, sourceSheet, "UNMATCHED_SRC(all rows - target '" & targetSheet & "' missing/empty)"
+        batch.Message = targetSheet & ": target sheet empty while '" & sourceSheet & "' has rows."
         Exit Sub
     End If
+
     Set body = lo.DataBodyRange
     tv = body.Value2
     nT = UBound(tv, 1)
@@ -157,29 +266,66 @@ Private Sub PrepareWishes(ByVal wbW As Workbook, ByVal wbDst As Workbook, ByVal 
     Set dNameRow = CreateObject("Scripting.Dictionary")
     ReDim tdk(1 To nT)
     ReDim badTargetDate(1 To nT)
+    ReDim targetDup(1 To nT)
 
-    ' ---------- index target students ----------
+    ' ---------- 1. Index and validate target students (Term01Guidance.xlsx) ----------
     For i = 1 To nT
+        location = wsDst.Name & "!" & (body.Row + i - 1)
         nk = NameKey(tv(i, C_NAME))
-        If Len(nk) > 0 Then
+        If Len(nk) = 0 Then
+            batch.InvalidCount = batch.InvalidCount + 1
+            batch.HasFatalStop = True
+            AddValidationIssue stopIssues, location, "MISSING_NAME_DST"
+        Else
             If Not BlankValue(tv(i, C_BIRTH)) Then
                 If TryBirthDate(tv(i, C_BIRTH), wbDst.Date1904, born) Then
                     tdk(i) = DateKey(tv(i, C_BIRTH), wbDst.Date1904)
                 Else
-                    AddValidationIssue problems, wsDst.Name & "!" & (body.Row + i - 1), "C"
+                    AddValidationIssue stopIssues, location, "BAD_DATE_DST(C)"
                     badTargetDate(i) = True
+                    batch.InvalidCount = batch.InvalidCount + 1
+                    batch.HasFatalStop = True
                 End If
             End If
+
             If dNameCnt.Exists(nk) Then
                 dNameCnt(nk) = dNameCnt(nk) + 1
+                ' If either target row with the same name lacks a birth date, it is ambiguous in target
+                firstTargetRow = CLng(dNameRow(nk))
+                If (Len(tdk(i)) = 0 And Not badTargetDate(i)) Or (Len(tdk(firstTargetRow)) = 0 And Not badTargetDate(firstTargetRow)) Then
+                    If Not targetDup(firstTargetRow) Then
+                        targetDup(firstTargetRow) = True
+                        batch.MultiTargetCount = batch.MultiTargetCount + 1
+                    End If
+                    If Not targetDup(i) Then
+                        targetDup(i) = True
+                        batch.MultiTargetCount = batch.MultiTargetCount + 1
+                    End If
+                    batch.HasFatalStop = True
+                    AddValidationIssue stopIssues, wsDst.Name & "!" & (body.Row + firstTargetRow - 1), "MULTI_DST(" & (body.Row + i - 1) & ")"
+                    AddValidationIssue stopIssues, location, "MULTI_DST(" & (body.Row + firstTargetRow - 1) & ")"
+                End If
             Else
                 dNameCnt.Add nk, 1
                 dNameRow.Add nk, i
             End If
+
             If Len(tdk(i)) > 0 Then
                 fk = nk & "|" & tdk(i)
                 If dFull.Exists(fk) Then
-                    dFull(fk) = -1            ' duplicate in target
+                    firstTargetRow = Abs(CLng(dFull(fk)))
+                    dFull(fk) = -firstTargetRow            ' duplicate in target
+                    If Not targetDup(firstTargetRow) Then
+                        targetDup(firstTargetRow) = True
+                        batch.MultiTargetCount = batch.MultiTargetCount + 1
+                    End If
+                    If Not targetDup(i) Then
+                        targetDup(i) = True
+                        batch.MultiTargetCount = batch.MultiTargetCount + 1
+                    End If
+                    batch.HasFatalStop = True
+                    AddValidationIssue stopIssues, wsDst.Name & "!" & (body.Row + firstTargetRow - 1), "MULTI_DST(" & (body.Row + i - 1) & ")"
+                    AddValidationIssue stopIssues, location, "MULTI_DST(" & (body.Row + firstTargetRow - 1) & ")"
                 Else
                     dFull.Add fk, i
                 End If
@@ -187,152 +333,216 @@ Private Sub PrepareWishes(ByVal wbW As Workbook, ByVal wbDst As Workbook, ByVal 
         End If
     Next i
 
-    ' ---------- validate ALL source records before matching ----------
-    ' This catches later duplicates before any record from their group is written.
-    lastRow = wsW.Cells(wsW.Rows.Count, W_COL_NAME).End(xlUp).Row
-    If lastRow >= W_FIRST_ROW Then
-        wv = wsW.Range(wsW.Cells(W_FIRST_ROW, 1), wsW.Cells(lastRow, W_COL_W2)).Value2
-        nSource = UBound(wv, 1)
-        ReDim sourceNames(1 To nSource)
-        ReDim sourceDates(1 To nSource)
-        ReDim sourceOKRows(1 To nSource)
-        ReDim sourceTargets(1 To nSource)
-        For r = 1 To nSource
-            nk = NameKey(wv(r, W_COL_NAME))
-            sourceNames(r) = nk
-            If Len(nk) > 0 Then
-                location = sourceSheet & "!" & (W_FIRST_ROW + r - 1)
-                sourceOKRows(r) = True
-                dk = ""
-                If Not BlankValue(wv(r, W_COL_BIRTH)) Then
-                    If TryBirthDate(wv(r, W_COL_BIRTH), wbW.Date1904, born) Then
-                        dk = DateKey(wv(r, W_COL_BIRTH), wbW.Date1904)
-                    Else
-                        AddValidationIssue problems, location, "C"
-                        sourceOKRows(r) = False
-                    End If
-                End If
-                sourceDates(r) = dk
-                If sourceOKRows(r) Then
-                    sourceKey = nk & "|" & dk
-                    If dSource.Exists(sourceKey) Then
-                        firstSourceRow = CLng(dSource(sourceKey))
-                        firstSourceIndex = firstSourceRow - W_FIRST_ROW + 1
-                        AddValidationIssue problems, location, "DUP(" & firstSourceRow & ")"
-                        AddValidationIssue problems, sourceSheet & "!" & firstSourceRow, "DUP(" & (W_FIRST_ROW + r - 1) & ")"
-                        sourceOKRows(r) = False
-                        sourceOKRows(firstSourceIndex) = False
-                    Else
-                        dSource.Add sourceKey, W_FIRST_ROW + r - 1
-                    End If
-                End If
-                ' Unknown wishes: warn, keep the pupil, import the unknown wish as empty.
-                If IsUnknownWish(wv(r, W_COL_W1), isArts) Then AddValidationIssue problems, location, "D"
-                If IsUnknownWish(wv(r, W_COL_W2), isArts) Then AddValidationIssue problems, location, "E"
-                ' Only a repeated non-empty wish (D=E) still skips the record.
-                If Not CollectWishPairIssues(CleanWish(wv(r, W_COL_W1), isArts), CleanWish(wv(r, W_COL_W2), isArts), _
-                                             location, "D", "E", problems, isArts) Then sourceOKRows(r) = False
-            End If
-        Next r
-    End If
+    ' ---------- 2. Validate ALL source records (the wishes file) ----------
+    ReDim sourceNames(1 To nSource)
+    ReDim sourceDates(1 To nSource)
+    ReDim sourceOKRows(1 To nSource)
+    ReDim sourceTargets(1 To nSource)
 
-    ' ---------- match only validated records ----------
     For r = 1 To nSource
-        If sourceOKRows(r) Then
+        location = sourceSheet & "!" & (W_FIRST_ROW + r - 1)
+        nk = NameKey(wv(r, W_COL_NAME))
+        sourceNames(r) = nk
+
+        If Len(nk) = 0 Then
+            If Not BlankValue(wv(r, W_COL_BIRTH)) Or Not BlankValue(wv(r, W_COL_W1)) Or Not BlankValue(wv(r, W_COL_W2)) Then
+                batch.UnmatchedSourceCount = batch.UnmatchedSourceCount + 1
+                batch.HasFatalStop = True
+                AddValidationIssue stopIssues, location, "UNMATCHED_SRC(missing name)"
+            End If
+        Else
+            sourceOKRows(r) = True
+            dk = ""
+            If Not BlankValue(wv(r, W_COL_BIRTH)) Then
+                If TryBirthDate(wv(r, W_COL_BIRTH), wbW.Date1904, born) Then
+                    dk = DateKey(wv(r, W_COL_BIRTH), wbW.Date1904)
+                Else
+                    AddValidationIssue stopIssues, location, "BAD_DATE_SRC(C)"
+                    sourceOKRows(r) = False
+                    batch.InvalidCount = batch.InvalidCount + 1
+                    batch.HasFatalStop = True
+                End If
+            End If
+            sourceDates(r) = dk
+
+            If sourceOKRows(r) Then
+                sourceKey = nk & "|" & dk
+                If dSource.Exists(sourceKey) Then
+                    firstSourceRow = CLng(dSource(sourceKey))
+                    firstSourceIndex = firstSourceRow - W_FIRST_ROW + 1
+                    AddValidationIssue stopIssues, firstSourceRowLabel(sourceSheet, firstSourceRow), "MULTI_SRC(" & (W_FIRST_ROW + r - 1) & ")"
+                    AddValidationIssue stopIssues, location, "MULTI_SRC(" & firstSourceRow & ")"
+                    sourceOKRows(r) = False
+                    sourceOKRows(firstSourceIndex) = False
+                    batch.MultiSourceCount = batch.MultiSourceCount + 1
+                    batch.HasFatalStop = True
+                Else
+                    dSource.Add sourceKey, W_FIRST_ROW + r - 1
+                End If
+            End If
+
+            ' Validate wishes syntax (empty wishes are valid!)
+            If IsUnknownWish(wv(r, W_COL_W1), isArts) Then
+                AddValidationIssue stopIssues, location, "INVALID_WISH(D)"
+                sourceOKRows(r) = False
+                batch.InvalidCount = batch.InvalidCount + 1
+                batch.HasFatalStop = True
+            End If
+            If IsUnknownWish(wv(r, W_COL_W2), isArts) Then
+                AddValidationIssue stopIssues, location, "INVALID_WISH(E)"
+                sourceOKRows(r) = False
+                batch.InvalidCount = batch.InvalidCount + 1
+                batch.HasFatalStop = True
+            End If
+            If Not CollectWishPairIssues(CleanWish(wv(r, W_COL_W1), isArts), CleanWish(wv(r, W_COL_W2), isArts), _
+                                         location, "D", "E", stopIssues, isArts) Then
+                sourceOKRows(r) = False
+                batch.InvalidCount = batch.InvalidCount + 1
+                batch.HasFatalStop = True
+            End If
+        End If
+    Next r
+
+    ' ---------- 3. Match source records to target records ----------
+    For r = 1 To nSource
+        If Len(sourceNames(r)) > 0 And sourceOKRows(r) Then
             nk = sourceNames(r)
             dk = sourceDates(r)
             location = sourceSheet & "!" & (W_FIRST_ROW + r - 1)
             rowT = 0
-            reason = ""
+
             If Not dNameCnt.Exists(nk) Then
-                reason = "name not found"
+                ' No match in target
+                batch.UnmatchedSourceCount = batch.UnmatchedSourceCount + 1
+                batch.HasFatalStop = True
+                AddValidationIssue stopIssues, location, "UNMATCHED_SRC(" & CStr(wv(r, W_COL_NAME)) & ")"
+                sourceOKRows(r) = False
             ElseIf Len(dk) > 0 Then
                 fk = nk & "|" & dk
                 If dFull.Exists(fk) Then
-                    rowT = dFull(fk)
+                    rowT = CLng(dFull(fk))
                     If rowT < 0 Then
+                        ' Multiple rows in target matched this student
                         rowT = 0
-                        reason = "duplicate in target"
+                        batch.MultiTargetCount = batch.MultiTargetCount + 1
+                        batch.HasFatalStop = True
+                        AddValidationIssue stopIssues, location, "MULTI_DST(" & CStr(wv(r, W_COL_NAME)) & ")"
+                        sourceOKRows(r) = False
                     End If
                 ElseIf dNameCnt(nk) = 1 Then
-                    If Len(tdk(dNameRow(nk))) = 0 Then
+                    If Len(tdk(dNameRow(nk))) = 0 And Not badTargetDate(dNameRow(nk)) Then
                         rowT = dNameRow(nk)
                     Else
-                        reason = "birth date mismatch"
+                        batch.UnmatchedSourceCount = batch.UnmatchedSourceCount + 1
+                        batch.HasFatalStop = True
+                        AddValidationIssue stopIssues, location, "UNMATCHED_SRC(date mismatch: " & CStr(wv(r, W_COL_NAME)) & ")"
+                        sourceOKRows(r) = False
                     End If
                 Else
-                    reason = "birth date mismatch"
+                    batch.UnmatchedSourceCount = batch.UnmatchedSourceCount + 1
+                    batch.HasFatalStop = True
+                    AddValidationIssue stopIssues, location, "UNMATCHED_SRC(date mismatch: " & CStr(wv(r, W_COL_NAME)) & ")"
+                    sourceOKRows(r) = False
                 End If
             Else
+                ' Source row has no birth date
                 If dNameCnt(nk) = 1 Then
                     rowT = dNameRow(nk)
                 Else
-                    reason = "ambiguous name (no date)"
+                    ' Multiple rows in target share this name
+                    batch.MultiTargetCount = batch.MultiTargetCount + 1
+                    batch.HasFatalStop = True
+                    AddValidationIssue stopIssues, location, "MULTI_DST(ambiguous name: " & CStr(wv(r, W_COL_NAME)) & ")"
+                    sourceOKRows(r) = False
                 End If
             End If
 
             If rowT > 0 Then
-                If badTargetDate(rowT) Then
-                    ' A malformed target birth date must never act as a missing date.
+                If badTargetDate(rowT) Or targetDup(rowT) Then
                     sourceOKRows(r) = False
+                    batch.HasFatalStop = True
                 ElseIf dWritten.Exists(CStr(rowT)) Then
+                    ' More than one row in wishes file matched the same target pupil
                     firstSourceRow = Abs(CLng(dWritten(CStr(rowT))))
                     firstSourceIndex = firstSourceRow - W_FIRST_ROW + 1
-                    AddValidationIssue problems, location, "DUP(" & firstSourceRow & ")"
-                    AddValidationIssue problems, sourceSheet & "!" & firstSourceRow, "DUP(" & (W_FIRST_ROW + r - 1) & ")"
+                    AddValidationIssue stopIssues, firstSourceRowLabel(sourceSheet, firstSourceRow), "MULTI_SRC(" & (W_FIRST_ROW + r - 1) & ")"
+                    AddValidationIssue stopIssues, location, "MULTI_SRC(" & firstSourceRow & ")"
                     sourceOKRows(r) = False
                     sourceOKRows(firstSourceIndex) = False
-                    ' Negative owner keeps this target blocked for any third record.
                     dWritten(CStr(rowT)) = -firstSourceRow
+                    batch.MultiSourceCount = batch.MultiSourceCount + 1
+                    batch.HasFatalStop = True
                 Else
                     dWritten.Add CStr(rowT), W_FIRST_ROW + r - 1
                     sourceTargets(r) = rowT
                 End If
-            Else
-                unmatched = unmatched + 1
-                If shown < MAX_LIST Then
-                    nm = CStr(wv(r, W_COL_NAME))
-                    lst = lst & vbLf & "  - " & nm & " (" & reason & ")"
-                    shown = shown + 1
+            End If
+        End If
+    Next r
+
+    ' ---------- 4. Check for target students that had NO match in wishes file ----------
+    For i = 1 To nT
+        If Len(NameKey(tv(i, C_NAME))) > 0 And Not targetDup(i) Then
+            If Not dWritten.Exists(CStr(i)) Then
+                batch.UnmatchedTargetCount = batch.UnmatchedTargetCount + 1
+                batch.HasFatalStop = True
+                AddValidationIssue stopIssues, wsDst.Name & "!" & (body.Row + i - 1), _
+                                   "UNMATCHED_DST(" & CStr(tv(i, C_NAME)) & ")"
+            End If
+        End If
+    Next i
+
+    ' ---------- 5. Build valid 1-to-1 assignments & track empty wishes ----------
+    For r = 1 To nSource
+        If Len(sourceNames(r)) > 0 And sourceOKRows(r) And sourceTargets(r) > 0 Then
+            rowT = sourceTargets(r)
+            w1Clean = CleanWish(wv(r, W_COL_W1), isArts)
+            w2Clean = CleanWish(wv(r, W_COL_W2), isArts)
+            wishOut(rowT, 1) = w1Clean
+            wishOut(rowT, 2) = w2Clean
+            writeRows(rowT) = True
+            batch.Matched = batch.Matched + 1
+
+            ' Single match with empty wish cell(s): work continues and announces it in report
+            If BlankValue(w1Clean) Or BlankValue(w2Clean) Then
+                batch.EmptyWishCount = batch.EmptyWishCount + 1
+                If BlankValue(w1Clean) And BlankValue(w2Clean) Then
+                    AddValidationIssue emptyNotes, wsDst.Name & "!" & (body.Row + rowT - 1), _
+                                       CStr(tv(rowT, C_NAME)) & " (Wish 1 & 2 empty)"
+                ElseIf BlankValue(w1Clean) Then
+                    AddValidationIssue emptyNotes, wsDst.Name & "!" & (body.Row + rowT - 1), _
+                                       CStr(tv(rowT, C_NAME)) & " (Wish 1 empty)"
+                Else
+                    AddValidationIssue emptyNotes, wsDst.Name & "!" & (body.Row + rowT - 1), _
+                                       CStr(tv(rowT, C_NAME)) & " (Wish 2 empty)"
                 End If
             End If
         End If
     Next r
 
-    ' Build only unique valid assignments after all collisions have been excluded.
-    For r = 1 To nSource
-        If Len(sourceNames(r)) > 0 Then
-            If Not sourceOKRows(r) Then
-                skippedInvalid = skippedInvalid + 1
-            ElseIf sourceTargets(r) > 0 Then
-                rowT = sourceTargets(r)
-                wishOut(rowT, 1) = CleanWish(wv(r, W_COL_W1), isArts)
-                wishOut(rowT, 2) = CleanWish(wv(r, W_COL_W2), isArts)
-                writeRows(rowT) = True
-                matched = matched + 1
-            End If
-        End If
-    Next r
-
-    For i = 1 To nT
-        Call CollectWishPairIssues(wishOut(i, 1), wishOut(i, 2), _
-                                   wsDst.Name & "!" & (body.Row + i - 1), ColumnLetter(wishColumn), ColumnLetter(wishColumn + 1), problems, isArts)
-        If BlankValue(wishOut(i, 1)) Then noWish = noWish + 1
-    Next i
-    ' Data issues are warnings: valid assignments still proceed.
-
-
     batch.Wishes = wishOut
     batch.WriteRows = writeRows
-    batch.Matched = matched
-    batch.Message = targetSheet & ": imported " & matched & "; skipped invalid " & skippedInvalid & _
-                    "; unmatched " & unmatched & "; no wish 01: " & noWish & "."
+
+    If batch.HasFatalStop Then
+        batch.Message = targetSheet & ": STOPPED (matched: " & batch.Matched & _
+                        ", unmatched in wishes: " & batch.UnmatchedSourceCount & _
+                        ", unmatched in target: " & batch.UnmatchedTargetCount & _
+                        ", multi-match in wishes: " & batch.MultiSourceCount & _
+                        ", multi-match in target: " & batch.MultiTargetCount & ")."
+    Else
+        batch.Message = targetSheet & ": 100% matched (" & batch.Matched & " pupil(s) transferred" & _
+                        "; empty wish cells: " & batch.EmptyWishCount & ")."
+    End If
 End Sub
+
+Private Function firstSourceRowLabel(ByVal sheetName As String, ByVal rowNo As Long) As String
+    firstSourceRowLabel = sheetName & "!" & rowNo
+End Function
 
 Private Sub WriteWishes(ByVal wb As Workbook, ByRef batch As WishesBatch)
     Dim ws As Worksheet, lo As ListObject, body As Range, rows As Variant, wishes As Variant
     Dim width As Long, firstWish As Long, i As Long, pair(1 To 1, 1 To 2) As Variant
-    If batch.Matched = 0 Then Exit Sub
+    If batch.Matched = 0 Or batch.HasFatalStop Then Exit Sub
     If batch.IsArts Then
         Set ws = wb.Worksheets("Data01"): width = 15: firstWish = 11
     Else
@@ -386,7 +596,6 @@ Private Function NameKey(ByVal x As Variant) As String
     NameKey = Join(t, " ")
 End Function
 
-' Date key yyyymmdd ("" if empty or unreadable). Accepts date serials, yyyy-mm-dd and dd/mm/yyyy text.
 Private Function DateKey(ByVal x As Variant, Optional ByVal date1904 As Boolean = False) As String
     Dim d As Date
     If IsError(x) Then Err.Raise vbObjectError + 44, , "Error value in a birth date."
@@ -397,7 +606,6 @@ Private Function DateKey(ByVal x As Variant, Optional ByVal date1904 As Boolean 
     DateKey = Format$(d, "yyyymmdd")
 End Function
 
-' Wish text -> canonical branch name; unrecognized text is kept as is; blank -> Empty
 Private Function Canon(ByVal x As Variant) As Variant
     Dim t As String
     Canon = Empty
@@ -416,6 +624,12 @@ Private Function Canon(ByVal x As Variant) As Variant
         Canon = L("exp")
     ElseIf InStr(t, Norm(L("f_math"))) > 0 Then
         Canon = L("math")
+    ElseIf InStr(t, Norm(L("w_fine"))) > 0 Then
+        Canon = L("w_fine")
+    ElseIf InStr(t, Norm(L("w_train"))) > 0 Then
+        Canon = L("w_train")
+    ElseIf InStr(t, Norm(L("w_voced"))) > 0 Then
+        Canon = L("w_voced")
     Else
         Canon = Trim$(CStr(x))
     End If
@@ -460,16 +674,16 @@ Private Function L(ByVal key As String) As String
     Case "f_tech": L = Txt("62A 642 646 64A")
     Case "f_mgmt": L = Txt("62A 633 64A 64A 631")
     Case "f_exp": L = Txt("639 644 648 645")
+    Case "w_fine": L = Txt("641 646 648 646")
+    Case "w_train": L = Txt("62A 643 648 64A 646 20 645 647 646 64A")
+    Case "w_voced": L = Txt("62A 639 644 64A 645 20 645 647 646 64A")
     End Select
 End Function
 
-Private Function OpenWb(ByVal fileName As String, ByVal asReadOnly As Boolean, ByRef opened As Boolean) As Workbook
-    Dim wb As Workbook, fullPath As String
+Private Function OpenWb(ByVal fullPath As String, ByVal asReadOnly As Boolean, ByRef opened As Boolean) As Workbook
+    Dim wb As Workbook, fileName As String
     opened = False
-    If Len(ThisWorkbook.Path) = 0 Then
-        Err.Raise vbObjectError + 1, , "Save the tool workbook before running this procedure."
-    End If
-    fullPath = ThisWorkbook.Path & Application.PathSeparator & fileName
+    fileName = Mid$(fullPath, InStrRev(fullPath, Application.PathSeparator) + 1)
     For Each wb In Application.Workbooks
         If StrComp(wb.FullName, fullPath, vbTextCompare) = 0 Then
             Set OpenWb = wb
@@ -484,7 +698,135 @@ Private Function OpenWb(ByVal fileName As String, ByVal asReadOnly As Boolean, B
     opened = True
 End Function
 
-' Normalizes Arabic text: alef/yaa/taa-marbuta variants, tatweel, NBSP, Arabic-Indic digits, extra spaces
+' ==============================================================================
+' WISHES FILE DISCOVERY (by structure, never by name)
+' ==============================================================================
+' Returns "" and sets fullPath when exactly ONE file in Source01 has the wishes
+' structure; otherwise returns the text to show (none found / several found).
+Public Function FindWishesFile(ByRef fullPath As String) As String
+    Dim folder As String, f As String, ext As String, names As Collection, i As Long
+    Dim wb As Workbook, opened As Boolean, state As Long
+    Dim hits As String, near As String, nHits As Long, firstHit As String
+
+    fullPath = ""
+    If Len(ThisWorkbook.Path) = 0 Then
+        FindWishesFile = "Save the tool workbook before running this procedure."
+        Exit Function
+    End If
+    folder = ThisWorkbook.Path & Application.PathSeparator & SRC_FOLDER & Application.PathSeparator
+    If Not WishFolderExists(folder) Then
+        FindWishesFile = "The folder '" & SRC_FOLDER & "' was not found next to the tool:" & vbLf & folder
+        Exit Function
+    End If
+
+    Set names = New Collection
+    f = Dir(folder & "*.xls*")
+    Do While f <> ""
+        If Left$(f, 2) <> "~$" Then
+            ext = LCase$(Mid$(f, InStrRev(f, ".") + 1))
+            If ext = "xlsx" Or ext = "xlsm" Or ext = "xls" Or ext = "xlsb" Then names.Add f
+        End If
+        f = Dir
+    Loop
+
+    For i = 1 To names.Count
+        f = CStr(names(i))
+        If StrComp(folder & f, ThisWorkbook.FullName, vbTextCompare) <> 0 Then
+            Set wb = WishOpenForInspection(folder & f, opened)
+            If Not wb Is Nothing Then
+                state = WishesLayoutState(wb)
+                If state = 2 Then
+                    nHits = nHits + 1
+                    hits = hits & vbLf & "  - " & f
+                    If nHits = 1 Then firstHit = folder & f
+                ElseIf state = 1 Then
+                    near = near & vbLf & "  - " & f
+                End If
+                If opened Then wb.Close SaveChanges:=False
+            End If
+        End If
+    Next i
+
+    If nHits = 1 Then
+        fullPath = firstHit
+    ElseIf nHits = 0 Then
+        FindWishesFile = "No wishes file was found in '" & SRC_FOLDER & "'." & vbLf & _
+            "It is recognised by its structure (sheets " & WISH_SHEET_SCIENCE & " / " & WISH_SHEET_ARTS & _
+            ", headers in row 2: name, birth date, wish 1, wish 2), not by its name."
+        If Len(near) > 0 Then FindWishesFile = FindWishesFile & vbLf & "Files with these sheets but different headers:" & near
+    Else
+        FindWishesFile = "More than one wishes file was found in '" & SRC_FOLDER & "' - keep only one:" & hits
+    End If
+End Function
+
+' 0 = not a wishes file, 1 = has a wishes sheet but the headers do not match, 2 = wishes file
+Private Function WishesLayoutState(ByVal wb As Workbook) As Long
+    Dim ws As Worksheet, nm As Variant, found As Long, good As Long
+    For Each nm In Array(WISH_SHEET_SCIENCE, WISH_SHEET_ARTS)
+        Set ws = Nothing
+        On Error Resume Next
+        Set ws = wb.Worksheets(CStr(nm))
+        On Error GoTo 0
+        If Not ws Is Nothing Then
+            found = found + 1
+            If WishHeadersOk(ws) Then good = good + 1
+        End If
+    Next nm
+    If found = 0 Then
+        WishesLayoutState = 0
+    ElseIf good = found Then
+        WishesLayoutState = 2
+    Else
+        WishesLayoutState = 1
+    End If
+End Function
+
+' Row 2 headers: B name, C birth date, D wish 1, E wish 2
+Private Function WishHeadersOk(ByVal ws As Worksheet) As Boolean
+    WishHeadersOk = WishCellHas(ws, 2, "627 633 645") And WishCellHas(ws, 3, "645 64A 644 627 62F") _
+                And WishCellHas(ws, 4, "631 63A 628") And WishCellHas(ws, 5, "631 63A 628")
+End Function
+
+Private Function WishCellHas(ByVal ws As Worksheet, ByVal col As Long, ByVal wordCodes As String) As Boolean
+    Dim v As Variant, w As String, p As Variant
+    On Error Resume Next
+    v = ws.Cells(W_FIRST_ROW - 1, col).MergeArea.Cells(1, 1).Value2
+    On Error GoTo 0
+    If IsError(v) Or IsNull(v) Or IsEmpty(v) Then Exit Function
+    For Each p In Split(wordCodes, " ")
+        If Len(p) > 0 Then w = w & ChrW(CLng("&H" & p))
+    Next p
+    WishCellHas = (Len(w) > 0 And InStr(Norm(v), Norm(w)) > 0)
+End Function
+
+Private Function WishOpenForInspection(ByVal fullPath As String, ByRef opened As Boolean) As Workbook
+    Dim wb As Workbook
+    opened = False
+    For Each wb In Application.Workbooks
+        If StrComp(wb.FullName, fullPath, vbTextCompare) = 0 Then
+            Set WishOpenForInspection = wb
+            Exit Function
+        End If
+    Next wb
+    On Error Resume Next
+    Set wb = Workbooks.Open(Filename:=fullPath, UpdateLinks:=0, ReadOnly:=True, AddToMRU:=False)
+    If Err.Number <> 0 Then
+        Err.Clear
+        Set wb = Nothing
+    End If
+    On Error GoTo 0
+    If Not wb Is Nothing Then
+        opened = True
+        Set WishOpenForInspection = wb
+    End If
+End Function
+
+Private Function WishFolderExists(ByVal p As String) As Boolean
+    On Error Resume Next
+    WishFolderExists = ((GetAttr(p) And vbDirectory) <> 0)
+    If Err.Number <> 0 Then WishFolderExists = False: Err.Clear
+End Function
+
 Private Function Norm(ByVal v As Variant) As String
     Dim t As String, i As Long
     If IsError(v) Then Exit Function
@@ -512,23 +854,6 @@ Private Function Norm(ByVal v As Variant) As String
     Norm = Trim$(t)
 End Function
 
-Private Function IsNum(ByVal v As Variant) As Boolean
-    If VarType(v) <> vbDouble Then Exit Function
-    IsNum = (CDbl(v) >= 0 And CDbl(v) <= 20)
-End Function
-
-Private Function Rnd2(ByVal x As Double) As Double
-    Rnd2 = Application.WorksheetFunction.Round(x, 2)
-End Function
-
-Private Function RoundN(ByVal x As Double) As Long
-    RoundN = CLng(Application.WorksheetFunction.Round(x, 0))
-End Function
-
-' Lock everything except wishes (O:P), then protect the sheet (no password, filtering allowed)
-
-' These are derived outputs: invalidate them whenever their inputs change.
-
 Private Function KnownWish(ByVal x As Variant, Optional ByVal isArts As Boolean = False) As Boolean
     Dim t As String, k As Long, labels As Variant
     If IsError(x) Then Exit Function
@@ -538,9 +863,9 @@ Private Function KnownWish(ByVal x As Variant, Optional ByVal isArts As Boolean 
     End If
     t = Norm(x)
     If isArts Then
-        labels = Array(ArtsText("arts"), ArtsText("lang"))
+        labels = Array(ArtsText("arts"), ArtsText("lang"), L("w_fine"), L("w_train"), L("w_voced"))
     Else
-        labels = Array(L("math"), L("tech"), L("exp"), L("mgmt"))
+        labels = Array(L("math"), L("tech"), L("exp"), L("mgmt"), L("w_fine"), L("w_train"), L("w_voced"))
     End If
     For k = LBound(labels) To UBound(labels)
         If t = Norm(labels(k)) Then
@@ -550,7 +875,6 @@ Private Function KnownWish(ByVal x As Variant, Optional ByVal isArts As Boolean 
     Next k
 End Function
 
-' Known wish -> canonical branch name; unknown, unreadable or blank -> Empty.
 Private Function CleanWish(ByVal x As Variant, Optional ByVal isArts As Boolean = False) As Variant
     Dim c As Variant
     CleanWish = Empty
@@ -581,7 +905,6 @@ Private Function CollectWishPairIssues(ByVal w1 As Variant, ByVal w2 As Variant,
         AddValidationIssue problems, location, col2
         CollectWishPairIssues = False
     End If
-    ' Both empty remains valid: no wish was submitted.
     If Not BlankValue(one) And Not BlankValue(two) Then
         If Norm(one) = Norm(two) Then
             AddValidationIssue problems, location, col1 & "=" & col2
@@ -590,7 +913,6 @@ Private Function CollectWishPairIssues(ByVal w1 As Variant, ByVal w2 As Variant,
     End If
 End Function
 
-' Workbook-aware birth date parsing. Invalid dates never become missing dates.
 Private Function BlankValue(ByVal x As Variant) As Boolean
     If IsError(x) Then Exit Function
     If IsNull(x) Then
@@ -674,38 +996,35 @@ Private Function TryBirthDate(ByVal x As Variant, ByVal date1904 As Boolean, ByR
 InvalidDate:
 End Function
 
-' Collect data issues while valid records continue; the final warning lists up to 20.
-' Short column codes keep the entire summary within the MsgBox text budget.
 Private Sub AddValidationIssue(ByVal problems As Object, ByVal location As String, ByVal detail As String)
     If problems.Exists(location) Then
         If InStr(1, " " & problems(location) & " ", " " & detail & " ", vbBinaryCompare) = 0 Then
-            problems(location) = problems(location) & " " & detail
+            problems(location) = problems(location) & " | " & detail
         End If
     Else
         problems.Add location, detail
     End If
 End Sub
 
-Private Function ValidationWarnings(ByVal problems As Object, ByVal heading As String) As String
-    Const MAX_ROWS As Long = 20
-    Const MAX_LINE As Long = 36
-    Const MAX_TEXT As Long = 1000
+Private Function AppendDetailsList(ByVal items As Object, ByVal baseMsg As String, ByVal sectionHeader As String) As String
+    Const MAX_ROWS As Long = 15
+    Const MAX_LINE As Long = 65
     Dim key As Variant, shown As Long, line As String, msg As String
-    msg = heading
-    If problems.Count > 0 Then
-        msg = msg & vbLf & "Rows with data issues: " & problems.Count & " (up to 20 shown)."
-        msg = msg & vbLf & "Letters=invalid columns (unknown wishes D/E left empty); D=E/O=P=repeated wishes; DUP(row)=duplicate."
-        For Each key In problems.Keys
+    msg = baseMsg
+    If items.Count > 0 Then
+        msg = msg & vbLf & sectionHeader
+        For Each key In items.Keys
             If shown >= MAX_ROWS Then Exit For
-            line = CStr(key) & ": " & problems(key)
+            line = "  - " & CStr(key) & ": " & items(key)
             If Len(line) > MAX_LINE Then line = Left$(line, MAX_LINE - 3) & "..."
-            If Len(msg) + Len(line) + 40 > MAX_TEXT Then Exit For
             msg = msg & vbLf & line
             shown = shown + 1
         Next key
-        If problems.Count > shown Then msg = msg & vbLf & "Additional issue rows: " & (problems.Count - shown)
+        If items.Count > shown Then
+            msg = msg & vbLf & "  ... and " & (items.Count - shown) & " more row(s)."
+        End If
     End If
-    ValidationWarnings = msg
+    AppendDetailsList = msg
 End Function
 
 Private Function ArtsText(ByVal key As String) As String
@@ -738,36 +1057,10 @@ Private Function ArtsText(ByVal key As String) As String
     Case "decision": ArtsText = Txt("627 642 62A 631 627 62D 20 645 633 62A 634 627 631 20 627 644 62A 648 62C 64A 647")
     Case "invalidated": ArtsText = Txt("62A 63A 64A 651 631 62A 20 628 64A 627 646 627 62A 20 647 630 627 20 627 644 645 633 627 631 2E 20 64A 62C 628 20 625 639 627 62F 629 20 62A 634 63A 64A 644 20 627 644 62A 648 62C 64A 647 20 644 62A 62D 62F 64A 62B 20 627 644 642 631 627 631 627 62A 20 648 627 644 62D 648 635 644 629 2E")
     Case "failure_unsaved": ArtsText = Txt("642 62F 20 62A 643 648 646 20 628 64A 627 646 627 62A 20 627 644 645 644 641 20 627 644 645 641 62A 648 62D 20 642 62F 20 62A 63A 64A 651 631 62A 20 62C 632 626 64A 64B 627 2E 20 644 627 20 62A 62D 641 638 20 627 644 645 644 641 60C 20 648 623 63A 644 642 647 20 62F 648 646 20 62D 641 638 20 62B 645 20 623 639 62F 20 641 62A 62D 647 2E")
-    Case "header_expected": ArtsText = Txt("627 644 639 646 648 627 646 20 627 644 645 62A 648 642 639 20 64A 62A 636 645 646 3A 20")
-    Case "h_number": ArtsText = Txt("631 642 645")
-    Case "h_name": ArtsText = Txt("627 633 645")
-    Case "h_birth": ArtsText = Txt("645 64A 644 627 62F")
-    Case "h_sex": ArtsText = Txt("62C 646 633")
-    Case "h_repeat": ArtsText = Txt("625 639 627 62F 629")
-    Case "h_arabic": ArtsText = Txt("639 631 628 64A")
-    Case "h_math": ArtsText = Txt("631 64A 627 636 64A 627 62A")
-    Case "h_physics": ArtsText = Txt("641 64A 632 64A 627")
-    Case "h_natural": ArtsText = Txt("637 628 64A 639")
-    Case "h_history": ArtsText = Txt("62A 627 631 64A 62E")
-    Case "h_french": ArtsText = Txt("641 631 646 633 64A")
-    Case "h_english": ArtsText = Txt("627 646 62C 644 64A 632")
-    Case "h_info": ArtsText = Txt("645 639 644 648 645 627 62A")
-    Case "h_info_alt": ArtsText = Txt("625 639 644 627 645")
-    Case "h_technology": ArtsText = Txt("62A 643 646 648 644 648 62C")
-    Case "h_average": ArtsText = Txt("645 639 62F 644 20 627 644 641 635 644")
-    Case "h_avg_word": ArtsText = Txt("645 639 62F 644")
-    Case "h_term_word": ArtsText = Txt("641 635 644")
     Case "general_report": ArtsText = Txt("62D 648 635 644 629 20 639 627 645 629")
-    Case "general_title": ArtsText = Txt("62D 635 64A 644 629 20 627 644 62A 648 62C 64A 647 20 627 644 646 647 627 626 64A")
-    Case "general_subtitle": ArtsText = Txt("627 642 62A 631 627 62D 627 62A 20 627 644 62A 648 62C 64A 647 20 644 644 62A 644 627 645 64A 630 20 627 644 646 627 62C 62D 64A 646")
-    Case "track_science": ArtsText = Txt("62C 20 645 20 639 644 648 645 20 648 62A 643 646 648 644 648 62C 64A 627")
-    Case "track_arts": ArtsText = Txt("62C 20 645 20 622 62F 627 628")
-    Case "male": ArtsText = Txt("630 643 631")
-    Case "female": ArtsText = Txt("623 646 62B 649")
     End Select
 End Function
 
-' Find the table by its A2 anchor, preserving an existing table name.
 Private Function GuidanceTable(ByVal ws As Worksheet, ByVal width As Long) As ListObject
     Dim lo As ListObject
     For Each lo In ws.ListObjects
@@ -818,22 +1111,11 @@ Private Sub InvalidateOrientation(ByVal wb As Workbook, ByVal ws As Worksheet)
         report.Unprotect Password:=""
         If report.ProtectContents Then Err.Raise vbObjectError + 81, , "Unprotect " & report.Name & " before running."
     End If
-    ' Keep every report formula and its layout; only old decisions are invalidated.
     lastRow = ws.Cells(ws.Rows.Count, decisionCol).End(xlUp).Row
     If lastRow >= 3 Then ws.Range(ws.Cells(3, decisionCol), ws.Cells(lastRow, decisionCol)).ClearContents
     If Not report Is Nothing Then report.Calculate
 End Sub
 
-Private Function ColumnLetter(ByVal n As Long) As String
-    Do While n > 0
-        ColumnLetter = Chr$(65 + (n - 1) Mod 26) & ColumnLetter
-        n = (n - 1) \ 26
-    Loop
-End Function
-
-
-' A placeholder row, whitespace, or formulas returning empty strings is not a pupil.
-' A numeric zero, an error, or any other data makes the table non-empty and validated.
 Private Function GuidanceTableIsEmpty(ByVal lo As ListObject) As Boolean
     Dim values As Variant, r As Long, c As Long
     GuidanceTableIsEmpty = True
@@ -865,8 +1147,4 @@ Private Function RequireWorksheet(ByVal wb As Workbook, ByVal sheetName As Strin
     Set ws = FindWorksheet(wb, sheetName)
     If ws Is Nothing Then Err.Raise vbObjectError + 83, , "Required sheet '" & sheetName & "' not found in " & wb.Name & ". Run data transfer first."
     Set RequireWorksheet = ws
-End Function
-
-Public Function Preferences01Succeeded() As Boolean
-    Preferences01Succeeded = m_runSucceeded
 End Function

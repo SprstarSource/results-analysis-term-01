@@ -2,15 +2,18 @@ Attribute VB_Name = "modOrientation01"
 Option Explicit
 
 Private m_runSucceeded As Boolean
+Private m_silent As Boolean
+Private m_lastReport As String
 
 ' ============================================================
-' Orientation 01: science (Data) and arts (Data01) in Term01Guidance.xlsx
+' Orientation 01: science (Data) and arts (Data01) of the guidance workbook kept in memory by
+' modTransfer01. It is saved (output folder next to the tool) only after both tracks succeed;
+' if the step fails, a copy of the current state is saved instead.
 ' Original21/15-column tables and two wishes per track; builds one live general report.
 ' Run order: Run_Transfer01 -> Run_StreamPreferences01 -> Run_Orientation01
 ' Science section column N is ignored; arts has no section column.
 ' ============================================================
 
-Private Const DST_FILE As String = "Term01Guidance.xlsx"
 Private Const DST_SHEET As String = "Data"
 Private Const DST_TABLE As String = "Data"
 Private Const FIRST_ROW As Long = 3
@@ -66,6 +69,15 @@ Private m_sDec(1 To 4) As Long
 Private m_sMet(1 To 4) As Long
 Private m_nStud As Long, m_nPass As Long, m_nRep As Long, m_nOri As Long
 
+' ---- silent mode and report (used by modOrientationAll01) ----
+Public Sub SetSilentMode(ByVal silent As Boolean)
+    m_silent = silent
+End Sub
+
+Public Function LastReport() As String
+    LastReport = m_lastReport
+End Function
+
 ' One public entry point runs both tracks and saves only after both succeed.
 Public Sub Run_Orientation01()
     Dim wb As Workbook, opened As Boolean, ws As Worksheet, lo As ListObject
@@ -73,7 +85,10 @@ Public Sub Run_Orientation01()
     Dim failed As Boolean, stateSaved As Boolean, errText As String, msg As String
     Dim scienceTouched As Boolean, artsTouched As Boolean
     Dim v As Variant, scienceSheet As Worksheet, artsSheet As Worksheet
+    Dim wasSilent As Boolean, savedPath As String, copyPath As String
+    wasSilent = m_silent
     m_runSucceeded = False
+    m_lastReport = ""
     On Error GoTo EH
     oldScreen = Application.ScreenUpdating
     oldAlerts = Application.DisplayAlerts
@@ -83,8 +98,7 @@ Public Sub Run_Orientation01()
     Application.DisplayAlerts = False
     Application.EnableEvents = False
     InitText
-    Set wb = OpenWb(DST_FILE, False, opened)
-    If wb.ReadOnly Then Err.Raise vbObjectError + 2, , DST_FILE & " is open read-only."
+    Set wb = OpenGuidance(opened)
 
     ' Missing destinations are skipped; present, wholly empty tables are valid.
     Set scienceSheet = FindWorksheet(wb, "Data")
@@ -118,7 +132,14 @@ Public Sub Run_Orientation01()
     If Not artsSheet Is Nothing Then msg = msg & vbLf & vbLf & OrientArts(wb) Else msg = msg & vbLf & "Data01: missing destination; skipped."
     BuildGeneralReport wb
     Application.Calculation = xlCalculationAutomatic
-    wb.Save
+    If modTransfer01.GuidanceWorkbook() Is Nothing Then
+        ' standalone run: the workbook was taken from the output folder, saved in place
+        wb.Save
+        savedPath = wb.FullName
+    Else
+        savedPath = modTransfer01.SaveGuidanceCopy()
+    End If
+    msg = msg & vbLf & vbLf & "Saved to: " & savedPath
     m_runSucceeded = True
 Done:
     On Error Resume Next
@@ -132,22 +153,30 @@ Done:
                 If Not lo Is Nothing Then LockAndProtect ws, lo.DataBodyRange
             End If
         Next ws
+        ' The step did not complete: keep the current state as a saved copy
+        copyPath = ""
+        copyPath = modTransfer01.SaveGuidanceCopy()
+        If Len(copyPath) > 0 Then errText = errText & vbLf & vbLf & "A copy of the guidance workbook (orientation incomplete) was saved: " & copyPath
     End If
     If stateSaved Then
         Application.EnableEvents = oldEvents
         Application.DisplayAlerts = oldAlerts
         Application.ScreenUpdating = oldScreen
     End If
+    m_silent = False
     On Error GoTo 0
-    If failed Then MsgBox "Orientation failed:" & vbLf & errText, vbCritical, "Orientation 01" Else MsgBox msg, vbInformation, "Orientation 01"
+    If failed Then
+        m_lastReport = "Orientation failed:" & vbLf & errText
+        If Not wasSilent Then MsgBox m_lastReport, vbCritical, "Orientation 01"
+    Else
+        m_lastReport = msg
+        If Not wasSilent Then MsgBox msg, vbInformation, "Orientation 01"
+    End If
     Exit Sub
 EH:
     m_runSucceeded = False
     failed = True
     errText = Err.Description
-    If (scienceTouched Or artsTouched) And Not opened Then
-        errText = errText & vbLf & vbLf & ArtsText("failure_unsaved")
-    End If
     Resume Done
 End Sub
 
@@ -180,8 +209,8 @@ Private Sub ValidateArtsData(ByRef v As Variant, ByVal date1904 As Boolean, ByVa
             If Not TryBirthDate(v(i, 3), date1904, d) Then AddValidationIssue problems, location, "C"
         End If
         w1 = ArtsWish(v(i, 11)): w2 = ArtsWish(v(i, 12))
-        If IsError(v(i, 11)) Or (Not BlankValue(v(i, 11)) And w1 = 0) Then AddValidationIssue problems, location, "K"
-        If IsError(v(i, 12)) Or (Not BlankValue(v(i, 12)) And w2 = 0) Then AddValidationIssue problems, location, "L"
+        If IsError(v(i, 11)) Or (Not BlankValue(v(i, 11)) And w1 = 0 And Not IsIgnoredWish(v(i, 11))) Then AddValidationIssue problems, location, "K"
+        If IsError(v(i, 12)) Or (Not BlankValue(v(i, 12)) And w2 = 0 And Not IsIgnoredWish(v(i, 12))) Then AddValidationIssue problems, location, "L"
         If w1 > 0 And w1 = w2 Then AddValidationIssue problems, location, "K=L"
     Next i
     RaiseValidationIssues problems, "Letters=invalid/missing columns; K=L=repeated non-empty wishes."
@@ -259,6 +288,7 @@ Private Function OrientArts(ByVal wb As Workbook) As String
         .Header = xlYes
         .Apply
     End With
+    NumberRows lo
     v = lo.DataBodyRange.Value2
     n = UBound(v, 1)
     ReDim output(1 To n, 1 To 1)
@@ -399,6 +429,8 @@ Private Function OrientScience(ByVal wbDst As Workbook) As String
         .Header = xlYes
         .Apply
     End With
+
+    NumberRows lo
 
     Set body = lo.DataBodyRange
     v = body.Value2
@@ -835,6 +867,22 @@ Private Function WishBranch(ByVal x As Variant) As Long
     End If
 End Function
 
+' Accepted but ignored wishes (fine arts / vocational training / vocational education):
+' never invalid, never counted, treated exactly like an empty cell.
+Private Function IsIgnoredWish(ByVal x As Variant) As Boolean
+    Dim t As String
+    If IsError(x) Then Exit Function
+    t = Norm(x)
+    If Len(t) = 0 Then Exit Function
+    If InStr(t, Norm(L("w_fine"))) > 0 Then
+        IsIgnoredWish = True
+    ElseIf InStr(t, Norm(L("w_train"))) > 0 Then
+        IsIgnoredWish = True
+    ElseIf InStr(t, Norm(L("w_voced"))) > 0 Then
+        IsIgnoredWish = True
+    End If
+End Function
+
 Private Function IsRepeater(ByVal x As Variant) As Boolean
     If IsError(x) Then Exit Function
     IsRepeater = (Norm(x) = g_yes)
@@ -932,16 +980,16 @@ Private Function L(ByVal key As String) As String
     Case "f_tech": L = Txt("62A 642 646 64A")
     Case "f_mgmt": L = Txt("62A 633 64A 64A 631")
     Case "f_exp": L = Txt("639 644 648 645")
+    Case "w_fine": L = Txt("641 646 648 646")
+    Case "w_train": L = Txt("62A 643 648 64A 646 20 645 647 646 64A")
+    Case "w_voced": L = Txt("62A 639 644 64A 645 20 645 647 646 64A")
     End Select
 End Function
 
-Private Function OpenWb(ByVal fileName As String, ByVal asReadOnly As Boolean, ByRef opened As Boolean) As Workbook
-    Dim wb As Workbook, fullPath As String
+Private Function OpenWb(ByVal fullPath As String, ByVal asReadOnly As Boolean, ByRef opened As Boolean) As Workbook
+    Dim wb As Workbook, fileName As String
     opened = False
-    If Len(ThisWorkbook.Path) = 0 Then
-        Err.Raise vbObjectError + 1, , "Save the tool workbook before running this procedure."
-    End If
-    fullPath = ThisWorkbook.Path & Application.PathSeparator & fileName
+    fileName = Mid$(fullPath, InStrRev(fullPath, Application.PathSeparator) + 1)
     For Each wb In Application.Workbooks
         If StrComp(wb.FullName, fullPath, vbTextCompare) = 0 Then
             Set OpenWb = wb
@@ -954,6 +1002,32 @@ Private Function OpenWb(ByVal fileName As String, ByVal asReadOnly As Boolean, B
     If Dir(fullPath) = "" Then Err.Raise vbObjectError + 1, , "File not found: " & fullPath
     Set OpenWb = Workbooks.Open(Filename:=fullPath, UpdateLinks:=0, ReadOnly:=asReadOnly)
     opened = True
+End Function
+
+' Output folder next to the tool workbook (hex code points)
+Private Function OutputFolderName() As String
+    OutputFolderName = Txt("645 639 627 644 62C 629 20 628 64A 627 646 627 62A 20 627 644 641 635 644 20 30 31")
+End Function
+
+' File name of the guidance workbook (the name itself is defined once, in modTransfer01).
+Private Function DST_FILE() As String
+    DST_FILE = modTransfer01.GuidanceFileName() & ".xlsx"
+End Function
+
+' The guidance workbook kept in memory by modTransfer01; when there is none (module run on its own),
+' the guidance workbook file of the output folder is opened instead.
+Private Function OpenGuidance(ByRef opened As Boolean) As Workbook
+    Dim wb As Workbook, p As String
+    opened = False
+    Set wb = modTransfer01.GuidanceWorkbook()
+    If Not wb Is Nothing Then
+        Set OpenGuidance = wb
+        Exit Function
+    End If
+    If Len(ThisWorkbook.Path) = 0 Then Err.Raise vbObjectError + 1, , "Save the tool workbook before running this procedure."
+    p = ThisWorkbook.Path & Application.PathSeparator & OutputFolderName() & Application.PathSeparator & DST_FILE
+    If Dir(p) = "" Then Err.Raise vbObjectError + 84, , "No guidance workbook is open and " & DST_FILE & " was not found in the output folder. Run the data transfer first (Term 01 Orientation button)."
+    Set OpenGuidance = OpenWb(p, False, opened)
 End Function
 
 ' Normalizes Arabic text: alef/yaa/taa-marbuta variants, tatweel, NBSP, Arabic-Indic digits, extra spaces
@@ -1043,10 +1117,10 @@ Private Sub ValidateGuidanceData(ByRef v As Variant, ByVal date1904 As Boolean, 
             If Not TryBirthDate(v(i, C_BIRTH), date1904, d) Then AddValidationIssue problems, location, "C"
         End If
         b1 = WishBranch(v(i, C_W1)): b2 = WishBranch(v(i, C_W2))
-        If IsError(v(i, C_W1)) Or (Not BlankValue(v(i, C_W1)) And b1 = 0) Then
+        If IsError(v(i, C_W1)) Or (Not BlankValue(v(i, C_W1)) And b1 = 0 And Not IsIgnoredWish(v(i, C_W1))) Then
             AddValidationIssue problems, location, "O"
         End If
-        If IsError(v(i, C_W2)) Or (Not BlankValue(v(i, C_W2)) And b2 = 0) Then
+        If IsError(v(i, C_W2)) Or (Not BlankValue(v(i, C_W2)) And b2 = 0 And Not IsIgnoredWish(v(i, C_W2))) Then
             AddValidationIssue problems, location, "P"
         End If
         ' Empty + empty remains valid.
@@ -1308,6 +1382,18 @@ Private Sub InvalidateOrientation(ByVal wb As Workbook, ByVal ws As Worksheet)
     If Not report Is Nothing Then report.Calculate
 End Sub
 
+' Column A (number): 1..n in the order of the table, which is already sorted by term average (descending).
+Private Sub NumberRows(ByVal lo As ListObject)
+    Dim n As Long, i As Long, nums() As Variant
+    If lo.DataBodyRange Is Nothing Then Exit Sub
+    n = lo.DataBodyRange.Rows.Count
+    ReDim nums(1 To n, 1 To 1)
+    For i = 1 To n
+        nums(i, 1) = i
+    Next i
+    lo.ListColumns(1).DataBodyRange.Value2 = nums
+End Sub
+
 Private Function ColumnLetter(ByVal n As Long) As String
     Do While n > 0
         ColumnLetter = Chr$(65 + (n - 1) Mod 26) & ColumnLetter
@@ -1459,12 +1545,12 @@ Private Sub BuildGeneralReport(ByVal wb As Workbook)
     ws.Range("B18").Formula = "=SUM(B12:B17)"
     ws.Range("C18").Formula = "=SUM(C12:C17)"
     ws.Range("E18").Formula = "=SUM(E12:E17)"
-    ' Proposal shares are calculated separately within each track.
+    ' Proposal shares are calculated within their own track: science and arts separately.
     ws.Range("D12:D15").FormulaR1C1 = "=IF(SUM(R12C3:R15C3)=0,0,RC3/SUM(R12C3:R15C3))"
     ws.Range("D16:D17").FormulaR1C1 = "=IF(SUM(R16C3:R17C3)=0,0,RC3/SUM(R16C3:R17C3))"
     ws.Range("D18").Formula = "=IF(C18=0,0,C18/C18)"
 
-    ' Wish satisfaction is calculated against decisions for the same branch.
+    ' Wish satisfaction is measured against the decisions for that same branch.
     ws.Range("F12:F17").FormulaR1C1 = "=IF(RC3=0,0,RC5/RC3)"
     ws.Range("F18").Formula = "=IF(C18=0,0,E18/C18)"
 
@@ -1534,15 +1620,9 @@ Private Function ReportColumnRef(ByVal lo As ListObject, ByVal columnNo As Long)
     ReportColumnRef = lo.Name & "[" & header & "]"
 End Function
 
-' Return one pattern only to prevent duplicate counting.
-' Hamza characters use Excel's single-character wildcard so common alif/hamza
-' spellings are matched without adding multiple COUNTIFS results.
 Private Function ReportPatterns(ByVal label As String) As Variant
     Dim pattern As String
     pattern = "*" & Replace(label, " ", "*") & "*"
-    pattern = Replace(pattern, ChrW(&H623), "?")
-    pattern = Replace(pattern, ChrW(&H625), "?")
-    pattern = Replace(pattern, ChrW(&H622), "?")
     ReportPatterns = Array(pattern)
 End Function
 
@@ -1601,8 +1681,7 @@ Public Sub RefreshReports01()
     Application.DisplayAlerts = False
     Application.EnableEvents = False
     InitText
-    Set wb = OpenWb(DST_FILE, False, opened)
-    If wb.ReadOnly Then Err.Raise vbObjectError + 2, , DST_FILE & " is open read-only."
+    Set wb = OpenGuidance(opened)
     ' Validate the layout of every available track before making any changes.
     For Each nm In Array("Data", "Data01")
         Set ws = FindWorksheet(wb, CStr(nm))
@@ -1625,7 +1704,7 @@ Public Sub RefreshReports01()
     Next nm
     BuildGeneralReport wb
     Application.Calculation = xlCalculationAutomatic
-    wb.Save
+    If opened Then wb.Save Else modTransfer01.SaveGuidanceCopy
 Done:
     On Error Resume Next
     If failed And opened Then
@@ -1656,7 +1735,6 @@ Done:
 EH:
     failed = True
     errText = Err.Description
-    If touched And Not opened Then errText = errText & vbLf & vbLf & ArtsText("failure_unsaved")
     Resume Done
 End Sub
 
