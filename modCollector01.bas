@@ -10,10 +10,14 @@ Option Explicit
 '              the file is written INSIDE the work folder next to the tool (name stored as
 '              hex code points in WORK_FOLDER_CODES): the folder is looked up by name and
 '              created when it does not exist
-'           3) Only MARKS files are collected: from column F, row 7, the cells must be
-'              averages (numbers, or text that stands for a number - it is converted to a
-'              real number). A file whose F7 onward is text (the stream-wishes file) is
-'              skipped and listed in the report.
+'           3) Only real MARKS files are collected, with TWO checks that work together:
+'                CHECK 1 (structure): row 6 must hold the identity headers - B name, C birth
+'                          date, D sex. The stream-wishes file (headers in row 2) fails here.
+'                CHECK 2 (marks): from column F, row 7 onward the cells must be averages
+'                          (numbers, or text that stands for a number - converted to a real
+'                          number). A file that holds mostly text there fails.
+'              A file that fails is skipped, never stops the run, and the report names the
+'              check that rejected it. Files are never recognised by their name.
 ' Entry   : CollectTerm01Results()
 '==============================================================================
 
@@ -268,6 +272,64 @@ Private Sub PrepareMarksBlock(ByRef arr As Variant, ByRef numCount As Long, ByRe
     Next r
 End Sub
 
+' ==============================================================================
+' CHECK 1 - STRUCTURE. A results file has its identity headers in row
+' DATA_START_ROW: B = name, C = birth date, D = sex. A file with any other layout
+' (for example the wishes file, whose headers are in row 2) is skipped and named
+' in the report; it never stops the run and it is never recognised by its file name.
+' ==============================================================================
+Private Function SrcHasResultsLayout(ByVal ws As Worksheet) As Boolean
+    SrcHasResultsLayout = SrcHeaderHas(ws, 2, "627 633 645") _
+                      And SrcHeaderHas(ws, 3, "645 64A 644 627 62F") _
+                      And SrcHeaderHas(ws, 4, "62C 646 633")
+End Function
+
+Private Function SrcHeaderHas(ByVal ws As Worksheet, ByVal col As Long, ByVal wordCodes As String) As Boolean
+    Dim v As Variant, h As String, w As String
+    On Error Resume Next
+    v = ws.Cells(DATA_START_ROW, col).MergeArea.Cells(1, 1).Value2
+    On Error GoTo 0
+    If IsError(v) Or IsNull(v) Or IsEmpty(v) Then Exit Function
+    h = SrcNormHeader(CStr(v))
+    w = SrcNormHeader(SrcWord(wordCodes))
+    SrcHeaderHas = (Len(w) > 0 And InStr(h, w) > 0)
+End Function
+
+Private Function SrcWord(ByVal codes As String) As String
+    Dim p As Variant, s As String
+    For Each p In Split(codes, " ")
+        If Len(p) > 0 Then s = s & ChrW(CLng("&H" & p))
+    Next p
+    SrcWord = s
+End Function
+
+Private Function SrcNormHeader(ByVal t As String) As String
+    t = Replace(t, ChrW(&H623), ChrW(&H627))    ' alef variants -> alef
+    t = Replace(t, ChrW(&H625), ChrW(&H627))
+    t = Replace(t, ChrW(&H622), ChrW(&H627))
+    t = Replace(t, ChrW(&H649), ChrW(&H64A))    ' alef maksura -> yaa
+    t = Replace(t, ChrW(&H629), ChrW(&H647))    ' taa marbuta -> haa
+    t = Replace(t, ChrW(&H640), "")             ' tatweel
+    t = Replace(t, ChrW(&HA0), " ")
+    t = Replace(t, ChrW(&H200E), "")
+    t = Replace(t, ChrW(&H200F), "")
+    t = Replace(t, vbTab, " ")
+    t = Replace(t, vbLf, " ")
+    t = Replace(t, vbCr, " ")
+    SrcNormHeader = LCase$(Trim$(t))
+End Function
+
+' True when the workbook has the sheets of the wishes file (only used to word the report)
+Private Function SrcHasWishSheets(ByVal wb As Workbook) As Boolean
+    Dim ws As Worksheet
+    For Each ws In wb.Worksheets
+        If StrComp(ws.Name, "Tecno", vbTextCompare) = 0 Or StrComp(ws.Name, "Litr", vbTextCompare) = 0 Then
+            SrcHasWishSheets = True
+            Exit Function
+        End If
+    Next ws
+End Function
+
 Public Function ProcessSingleSourceFile(ByRef wbResult As Workbook, _
                                         ByVal SourcePath As String, _
                                         ByVal fileName As String, _
@@ -318,6 +380,16 @@ Public Function ProcessSingleSourceFile(ByRef wbResult As Workbook, _
         wbSource.Close SaveChanges:=False: Exit Function
     End If
 
+    ' ---- CHECK 1 (structure): identity headers in row 6. Not a results layout -> skipped, named in the report
+    If Not SrcHasResultsLayout(wsSource) Then
+        If SrcHasWishSheets(wbSource) Then
+            ReasonOut = "CHECK 1 (headers) - WISHES FILE layout (sheets Tecno / Litr), not a results file, ignored"
+        Else
+            ReasonOut = "CHECK 1 (headers) - DIFFERENT_STRUCTURE (identity headers not found in row " & DATA_START_ROW & "), ignored"
+        End If
+        wbSource.Close SaveChanges:=False: Exit Function
+    End If
+
     ' ---- Read source data (before any sheet is created in the result workbook)
     On Error Resume Next
     DataArr = wsSource.Range(wsSource.Cells(DATA_START_ROW, 1), wsSource.Cells(LastRow, LastCol)).Value
@@ -334,8 +406,8 @@ Public Function ProcessSingleSourceFile(ByRef wbResult As Workbook, _
     '      converted to a real number; a file whose F7 onward is text (wishes file) is skipped.
     PrepareMarksBlock DataArr, numCount, textCount
     If numCount = 0 Or numCount <= textCount Then
-        ReasonOut = "NOT_A_MARKS_FILE | from F" & FIRST_MARK_ROW & " onward the cells are text, not averages" & _
-                    " (numbers: " & numCount & ", texts: " & textCount & ")"
+        ReasonOut = "CHECK 2 (marks) - from F" & FIRST_MARK_ROW & " onward the cells are text, not averages" & _
+                    " (numbers: " & numCount & ", texts: " & textCount & "), ignored"
         wbSource.Close SaveChanges:=False
         Exit Function
     End If
