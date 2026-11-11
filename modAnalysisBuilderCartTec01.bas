@@ -1,8 +1,8 @@
-Attribute VB_Name = "modBiuldAnalysisfilesCartTec01"
+Attribute VB_Name = "modAnalysisBuilderCartTec01"
 Option Explicit
 
 '==============================================================================
-' Module  : modBiuldAnalysisfilesCartTec01   (BuildCartTecSheet)
+' Module  : modAnalysisBuilderCartTec01   (BuildCartTecSheet)
 ' Purpose : Adds the Cart_Tec sheet (student technical card) of the term 1 file.
 '   Layout (same as the Term 03 card):  previous-year averages [D] | [F] | term 1 [H]
 '     [F] = exam results (BEPC / Baccalaureate) when the Data sheet has them,

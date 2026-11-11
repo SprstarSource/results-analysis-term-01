@@ -1,8 +1,8 @@
-Attribute VB_Name = "modBiuldAnalysisfilesCommon01"
+Attribute VB_Name = "modAnalysisBuilderCommon01"
 Option Explicit
 
 '==============================================================================
-' Module  : modBiuldAnalysisfilesCommon01
+' Module  : modAnalysisBuilderCommon01
 ' Purpose : Shared constants, text helpers, fonts, cell styles and the
 '           "discover what is inside the Data sheet" routine used by the Term 01
 '           modules (Data01, Analysis01, Compare01, CartTec01).

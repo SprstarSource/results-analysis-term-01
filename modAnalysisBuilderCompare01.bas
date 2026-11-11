@@ -1,10 +1,27 @@
-Attribute VB_Name = "modBiuldAnalysisfilesAnalysis01"
+Attribute VB_Name = "modAnalysisBuilderCompare01"
 Option Explicit
+
+'==============================================================================
+' Module  : modAnalysisBuilderCompare01   (BuildCompareSheet)
+' Purpose : Adds the AnalyseCompare sheet ONLY to the files that merge several
+'           sections (1TecnoGlobal, 2SEGlobal, 3SEGlobal ...). It compares the
+'           sections with the statistical indicators of the term 1 results.
+'   - Table 1 : mean of every subject (and of the term 1 average) per section
+'   - Table 2 : success rate of every subject per section
+'   - Table 3 : general data (numbers, gender, repeaters, success rates)
+'   - Then one block of indicators per subject (3 blocks per row):
+'     success rate, mean, median, mode, max, min, range, standard deviation,
+'     variance, coefficient of variation and the rank of each section.
+'   Formulas read the Data table directly (same formulas / formats as Analysis01).
+'==============================================================================
+
+Private Const BLOCK_ROWS As Long = 14
+Private Const IND_N As Long = 11
 ' ==============================================================================
-' RAW-SOURCE LAYER: embedded copy of the Collector01 / modBiuldAnalysisfilesData01 engine.
+' RAW-SOURCE LAYER: embedded copy of the Collector01 / modAnalysisBuilderData01 engine.
 ' It lets this module read \Source01\ and build the Data sheet by itself, so it does not
 ' depend on any other module (only on the shared Common module). If the engine in
-' modBiuldAnalysisfilesData01 changes, apply the same change here.
+' modAnalysisBuilderData01 changes, apply the same change here.
 ' ==============================================================================
 Private Const SOURCE_FOLDER_NAME As String = "Source01"
 
@@ -29,347 +46,339 @@ Private g_ActiveNumericFont As String
 ' ---- Standalone entry point settings ----
 ' Work folder name (next to the tool) stored as hex code points: pure ASCII file.
 Private Const WORK_FOLDER_CODES As String = "645 639 627 644 62C 629 20 628 64A 627 646 627 62A 20 627 644 641 635 644 20 30 31"
-Private Const OUT_SUFFIX As String = "_Analysis"
-Private Const RUN_TITLE As String = "Analysis 01"
+Private Const OUT_SUFFIX As String = "_Compare"
+Private Const RUN_TITLE As String = "Compare 01"
 
 
-'==============================================================================
-' Module  : modBiuldAnalysisfilesAnalysis01
-' Purpose : Adds Analysis01 (term 1 results, taken from Data) to a workbook that
-'           already has the Data sheet: one block per section.
-'==============================================================================
-
-' Keywords (normalised Arabic, no hamza) of the "core" subjects of each file
-Public Function CoreKeysFor(ByVal stem As String) As Variant
-    Select Case stem
-        Case "1LitAnalysis01", "1LitAnalysis01"
-            CoreKeysFor = Array(ArT("627 644 639 631 628 64A 629"), ArT("627 644 641 631 646 633 64A 629"), ArT("627 644 627 646 62C 644 64A 632 64A 629"), ArT("627 644 62A 627 631 64A 62E"))
-        Case "1TecnoGlobalAnalysis01", "2SEGlobalAnalysis01", "3SEGlobalAnalysis01", _
-             "1TecnoGlobalAnalysis01", "2SEGlobalAnalysis01", "3SEGlobalAnalysis01"
-            CoreKeysFor = Array(ArT("627 644 631 64A 627 636 64A 627 62A"), ArT("627 644 641 64A 632 64A"), ArT("627 644 637 628 64A 639"))
-        Case "2MathAnalysis01", "3MathAnalysis01", "2MathAnalysis01", "3MathAnalysis01"
-            CoreKeysFor = Array(ArT("627 644 631 64A 627 636 64A 627 62A"), ArT("627 644 641 64A 632 64A"))
-        Case "2GEAnalysis01", "3GEAnalysis01", "2GEAnalysis01", "3GEAnalysis01"
-            CoreKeysFor = Array(ArT("627 644 62A 627 631 64A 62E"), ArT("627 644 631 64A 627 636 64A 627 62A"), ArT("627 644 62A 633 64A 64A 631"), ArT("627 644 645 62D 627 633 628"), ArT("627 644 627 642 62A 635 627 62F"))
-        Case "2PhiloAnalysis01", "3PhiloAnalysis01", "2PhiloAnalysis01", "3PhiloAnalysis01"
-            CoreKeysFor = Array(ArT("627 644 639 631 628 64A 629"), ArT("627 644 641 631 646 633 64A 629"), ArT("627 644 627 646 62C 644 64A 632 64A 629"), ArT("627 644 62A 627 631 64A 62E"), ArT("627 644 641 644 633 641 629"))
-        Case "2LEAnalysis01", "2LEAnalysis01"
-            CoreKeysFor = Array(ArT("627 644 639 631 628 64A 629"), ArT("627 644 641 631 646 633 64A 629"), ArT("627 644 627 646 62C 644 64A 632 64A 629"), ArT("627 644 627 644 645 627 646 64A 629"), ArT("627 644 627 633 628 627 646 64A 629"), ArT("627 644 627 64A 637 627 644 64A 629"), ArT("627 644 62A 627 631 64A 62E"))
-        Case "3LEAnalysis01", "3LEAnalysis01"
-            CoreKeysFor = Array(ArT("627 644 639 631 628 64A 629"), ArT("627 644 641 631 646 633 64A 629"), ArT("627 644 627 646 62C 644 64A 632 64A 629"), ArT("627 644 627 644 645 627 646 64A 629"), ArT("627 644 627 633 628 627 646 64A 629"), ArT("627 644 627 64A 637 627 644 64A 629"))
-        Case Else
-            CoreKeysFor = Array()
-    End Select
+' ---- formula builders ---------------------------------------------------------
+' secN = "" means "all sections"
+Private Function CondP(ByVal sc As String, ByVal secN As String) As String
+    If secN = "" Then CondP = "" Else CondP = sc & "," & secN & ","
 End Function
 
-Private Function LangKeys() As Variant
-    LangKeys = Array(ArT("627 644 641 631 646 633 64A 629"), ArT("627 644 627 646 62C 644 64A 632 64A 629"), ArT("627 644 627 644 645 627 646 64A 629"), ArT("627 644 627 633 628 627 646 64A 629"), ArT("627 644 627 64A 637 627 644 64A 629"))
+Private Function MaskP(ByVal c As String, ByVal sc As String, ByVal secN As String) As String
+    If secN = "" Then
+        MaskP = "(" & c & ">0)"
+    Else
+        MaskP = "((" & sc & "=" & secN & ")*(" & c & ">0))"
+    End If
 End Function
 
-Private Function InList(ByVal subjName As String, ByVal keys As Variant) As Boolean
-    Dim i As Long, nm As String, kw As String
-    nm = NormAr(subjName)
-    For i = LBound(keys) To UBound(keys)
-        kw = NormAr(CStr(keys(i)))
-        If Len(kw) > 0 Then
-            If InStr(nm, kw) > 0 Then
-                InList = True
-                Exit Function
-            End If
-        End If
-    Next i
+Private Function FRate(ByVal c As String, ByVal sc As String, ByVal secN As String) As String
+    FRate = "=IFERROR(COUNTIFS(" & CondP(sc, secN) & c & "," & QT & ">=" & CStr(PASS_MARK) & QT & ")/COUNTIFS(" & _
+            CondP(sc, secN) & c & "," & QT & ">0" & QT & ")," & QT & QT & ")"
+End Function
+
+Private Function FMean(ByVal c As String, ByVal sc As String, ByVal secN As String) As String
+    FMean = "=IFERROR(AVERAGEIFS(" & c & "," & CondP(sc, secN) & c & "," & QT & ">0" & QT & ")," & QT & QT & ")"
+End Function
+
+Private Function FMedian(ByVal c As String, ByVal sc As String, ByVal secN As String) As String
+    FMedian = "=IFERROR(AGGREGATE(17,6," & c & "/" & MaskP(c, sc, secN) & ",2)," & QT & QT & ")"
+End Function
+
+Private Function FMode(ByVal c As String, ByVal sc As String, ByVal secN As String) As String
+    FMode = "=IFERROR(MODE.SNGL(IF(" & MaskP(c, sc, secN) & "," & c & "))," & QT & QT & ")"
+End Function
+
+Private Function FMax(ByVal c As String, ByVal sc As String, ByVal secN As String) As String
+    FMax = "=IFERROR(MAXIFS(" & c & "," & CondP(sc, secN) & c & "," & QT & ">0" & QT & ")," & QT & QT & ")"
+End Function
+
+Private Function FMin(ByVal c As String, ByVal sc As String, ByVal secN As String) As String
+    FMin = "=IFERROR(MINIFS(" & c & "," & CondP(sc, secN) & c & "," & QT & ">0" & QT & ")," & QT & QT & ")"
+End Function
+
+Private Function FSd(ByVal c As String, ByVal sc As String, ByVal secN As String, ByVal mAddr As String) As String
+    FSd = "=IFERROR(SQRT(SUMPRODUCT(" & MaskP(c, sc, secN) & "*(" & c & "-" & mAddr & ")^2)/COUNTIFS(" & _
+          CondP(sc, secN) & c & "," & QT & ">0" & QT & "))," & QT & QT & ")"
+End Function
+
+' success rate of a group (gender / repeaters) on the term 1 average
+Private Function FGroupRate(ByVal grp As String, ByVal val As String, ByVal avg As String, _
+                            ByVal sc As String, ByVal secN As String) As String
+    FGroupRate = "=IFERROR(COUNTIFS(" & CondP(sc, secN) & grp & "," & QT & val & QT & "," & avg & "," & QT & ">=" & CStr(PASS_MARK) & QT & ")/COUNTIFS(" & _
+                 CondP(sc, secN) & grp & "," & QT & val & QT & "," & avg & "," & QT & ">0" & QT & ")," & QT & QT & ")"
+End Function
+
+Private Function FGroupCount(ByVal grp As String, ByVal val As String, ByVal sc As String, ByVal secN As String) As String
+    FGroupCount = "=COUNTIFS(" & CondP(sc, secN) & grp & "," & QT & val & QT & ")"
+End Function
+
+' ---- small helpers --------------------------------------------------------------
+Private Sub BestWorstRow(ByVal rng As Range)
+    Dim fc As Object
+    On Error Resume Next
+    Set fc = rng.FormatConditions.AddTop10
+    fc.TopBottom = xlTop10Top
+    fc.Rank = 1
+    fc.Percent = False
+    fc.Interior.Color = RGB(198, 239, 206)
+    fc.Font.Color = RGB(0, 97, 0)
+    fc.Font.Bold = True
+    Set fc = rng.FormatConditions.AddTop10
+    fc.TopBottom = xlTop10Bottom
+    fc.Rank = 1
+    fc.Percent = False
+    fc.Interior.Color = RGB(255, 199, 206)
+    fc.Font.Color = RGB(156, 0, 6)
+    fc.Font.Bold = True
+    Err.Clear
+End Sub
+
+' Title row (merged over the block) + header row (label, section numbers, "all")
+Private Sub PutTableHead(ByVal ws As Worksheet, ByVal r As Long, ByVal c0 As Long, ByVal nS As Long, _
+                         ByVal ttl As String, ByVal lbl As String)
+    Dim j As Long
+    MergeText ws, r, c0, c0 + nS + 1, ttl
+    StyleHead ws.Range(ws.Cells(r, c0), ws.Cells(r, c0 + nS + 1))
+    ws.Range(ws.Cells(r, c0), ws.Cells(r, c0 + nS + 1)).Font.Size = 16
+    ws.Rows(r).RowHeight = 36
+    ws.Cells(r + 1, c0).Value2 = lbl
+    For j = 1 To nS
+        ws.Cells(r + 1, c0 + j).NumberFormat = FMT_COUNT
+        ws.Cells(r + 1, c0 + j).Value2 = gSecList(j)
+    Next j
+    ws.Cells(r + 1, c0 + nS + 1).Value2 = ArT("627 644 643 644")
+    StyleHead ws.Range(ws.Cells(r + 1, c0), ws.Cells(r + 1, c0 + nS + 1))
+    ws.Rows(r + 1).RowHeight = 30
+End Sub
+
+Private Function SecText(ByVal j As Long, ByVal nS As Long) As String
+    If j <= nS Then SecText = CStr(gSecList(j)) Else SecText = ""
 End Function
 
 '==============================================================================
 ' MAIN
 '==============================================================================
-Public Function BuildAnalysisSheets(ByVal wb As Workbook, ByVal coreKeys As Variant, _
-                                    ByRef errText As String) As Boolean
-    Dim t As Long, s As Long, r0 As Long, rStart As Long, ws As Worksheet
-    Dim lastCol As Long
+Public Function BuildCompareSheet(ByVal wb As Workbook, ByRef errText As String) As Boolean
+    Dim ws As Worksheet
+    Dim n As Long, nS As Long, bw As Long, totalCols As Long
+    Dim ref() As String, nm() As String
+    Dim sc As String, sx As String, rp As String, avg As String
+    Dim male As String, fem As String, yes As String
+    Dim i As Long, j As Long, k As Long, b As Long, m As Long
+    Dim c0 As Long, col As Long, rTop As Long, nTop As Long, rSub As Long, rGrid0 As Long
+    Dim r0 As Long, r As Long, secN As String, rr(0 To IND_N - 1) As Long
+    Dim mAddr As String, sdAddr As String, mxAddr As String, mnAddr As String, rngM As String
+    Dim lbl As Variant, cLbl As Variant, f As String
 
-    BuildAnalysisSheets = False
+    BuildCompareSheet = False
     errText = ""
     On Error GoTo EH
 
     If Not DiscoverData(wb, errText) Then Exit Function
-
-    lastCol = FIRST_NUM_COL + gSubjN
-
-    Set ws = wb.Worksheets.Add(After:=wb.Worksheets(wb.Worksheets.Count))
-    ws.Name = ANALYSIS_SHEET
-    ws.DisplayRightToLeft = True
-    r0 = 1
-    For s = 1 To gSecN
-        rStart = r0
-        r0 = BuildBlock(ws, r0, 1, gSecList(s), coreKeys)
-        If s > 1 Then
-            On Error Resume Next
-            ws.HPageBreaks.Add Before:=ws.Cells(rStart, 1)
-            Err.Clear
-            On Error GoTo EH
-        End If
-    Next s
-    SetColumnWidths ws, lastCol
-    SetupPrint ws, r0 - 3, lastCol
-
-    BuildAnalysisSheets = True
-    Exit Function
-EH:
-    errText = "BuildAnalysisSheets: " & Err.Number & " : " & Err.Description
-    Err.Clear
-End Function
-
-'==============================================================================
-' ONE BLOCK
-'==============================================================================
-Private Function BuildBlock(ByVal ws As Worksheet, ByVal r0 As Long, ByVal t As Long, _
-                            ByVal sec As Long, ByVal coreKeys As Variant) As Long
-    Dim n As Long, lastCol As Long, k As Long, col As Long, i As Long
-    Dim ref() As String, hdrText() As String
-    Dim sc As String, sx As String, rp As String, annHdr As String
-    Dim secN As String, c As String, f As String, ttl As String
-    Dim pe As String, fem As String, mal As String, yes As String, pm As String
-    Dim rT As Long, rC1 As Long, rC2 As Long, rC3 As Long, rH1 As Long
-    Dim rAvg As Long, rFem As Long, rMal As Long, rRate As Long, rRep As Long, rMax As Long, rMin As Long
-    Dim rQ1 As Long, rT2 As Long, rH2 As Long, rB1 As Long, rH3 As Long, rI1 As Long, rK1 As Long
-    Dim prodAll As String, prodCore As String, prodCoreF As String, prodLang As String
-    Dim nCore As Long, nLang As Long
-    Dim lows As Variant, highs As Variant, bandLbl As Variant
-    Dim mAddr As String, sdAddr As String, avgRef As String
-    Dim nQ As Long, qLbl(1 To 4) As String, qF(1 To 4) As String
-    Dim a1() As Variant, a2() As Variant, a3() As Variant, a4() As Variant, nc As Long, j As Long
+    If gSecN < 2 Then
+        BuildCompareSheet = True       ' single section: no comparison sheet
+        Exit Function
+    End If
 
     n = gSubjN
-    lastCol = FIRST_NUM_COL + n
-    ReDim ref(FIRST_NUM_COL To lastCol)
-    ReDim hdrText(FIRST_NUM_COL To lastCol)
+    nS = gSecN
+    bw = nS + 2
+    totalCols = 3 * bw + 2
 
+    ReDim ref(1 To n + 1)
+    ReDim nm(1 To n + 1)
+    For i = 1 To n
+        ref(i) = ColRef(gHdr(gSubjC1(i)))
+        nm(i) = gSubjName(i)
+    Next i
+    ref(n + 1) = ColRef(gHdr(gAvgC1))
+    nm(n + 1) = ArT("645 639 62F 644 20 627 644 641 635 644 20 627 644 623 648 644")
+    avg = ref(n + 1)
+    sc = ColRef(gHdr(gSecCol))
     sx = ColRef(gHdr(4))
     rp = ColRef(gHdr(5))
-    sc = ColRef(gHdr(gSecCol))
-    For k = 1 To n
-        ref(FIRST_NUM_COL + k - 1) = ColRef(gHdr(gSubjC1(k)))
-        hdrText(FIRST_NUM_COL + k - 1) = gSubjName(k)
-    Next k
-    ref(lastCol) = ColRef(gHdr(gAvgC1))
-    hdrText(lastCol) = gHdr(gAvgC1)
-    avgRef = ref(lastCol)
-
-    secN = CStr(sec)
+    male = ArT("630 643 631")
     fem = ArT("623 646 62B 649")
-    mal = ArT("630 643 631")
     yes = ArT("646 639 645")
-    pm = CStr(PASS_MARK)
 
-    ' ---- the "passed" cells
-    For k = 1 To n
-        c = ref(FIRST_NUM_COL + k - 1)
-        prodAll = prodAll & "*(((" & c & ">=" & pm & ")+(" & c & "=0))>0)"
-        If InList(gSubjName(k), coreKeys) Then
-            nCore = nCore + 1
-            prodCore = prodCore & "*(" & c & ">=" & pm & ")"
-            prodCoreF = prodCoreF & "*(" & c & "<" & pm & ")"
-            If InList(gSubjName(k), LangKeys()) Then
-                nLang = nLang + 1
-                prodLang = prodLang & "*(" & c & "<" & pm & ")"
-            End If
-        End If
-    Next k
+    Set ws = wb.Worksheets.Add(After:=wb.Worksheets(wb.Worksheets.Count))
+    ws.Name = COMPARE_SHEET
+    ws.DisplayRightToLeft = True
 
-    nQ = 1
-    qLbl(1) = ArT("639 62F 62F 20 627 644 62A 644 627 645 64A 630 20 627 644 646 627 62C 62D 64A 646 20 641 64A 20 62C 645 64A 639 20 627 644 645 648 627 62F")
-    qF(1) = "=SUMPRODUCT((" & sc & "=" & secN & ")" & prodAll & ")"
-    If nCore > 0 Then
-        nQ = nQ + 1
-        qLbl(nQ) = ArT("639 62F 62F 20 627 644 62A 644 627 645 64A 630 20 627 644 646 627 62C 62D 64A 646 20 641 64A 20 627 644 645 648 627 62F 20 627 644 623 633 627 633 64A 629")
-        qF(nQ) = "=SUMPRODUCT((" & sc & "=" & secN & ")" & prodCore & ")"
-    End If
-    If nLang > 0 Then
-        nQ = nQ + 1
-        qLbl(nQ) = ArT("639 62F 62F 20 627 644 62A 644 627 645 64A 630 20 627 644 646 627 62C 62D 64A 646 20 62F 648 646 20 627 644 644 63A 627 62A 20 627 644 623 62C 646 628 64A 629")
-        qF(nQ) = "=SUMPRODUCT((" & sc & "=" & secN & ")*(" & avgRef & ">=" & pm & ")" & prodLang & ")"
-    End If
-    If nCore > 0 Then
-        nQ = nQ + 1
-        qLbl(nQ) = ArT("639 62F 62F 20 627 644 62A 644 627 645 64A 630 20 63A 64A 631 20 627 644 646 627 62C 62D 64A 646 20 641 64A 20 623 64A 20 645 627 62F 629 20 623 633 627 633 64A 629")
-        qF(nQ) = "=SUMPRODUCT((" & sc & "=" & secN & ")" & prodCoreF & ")"
-    End If
-
-    ' ---- rows of the block
-    rT = r0
-    rC1 = r0 + 1: rC2 = r0 + 2: rC3 = r0 + 3
-    rH1 = r0 + 5
-    rAvg = rH1 + 1: rFem = rH1 + 2: rMal = rH1 + 3: rRate = rH1 + 4
-    rRep = rH1 + 5: rMax = rH1 + 6: rMin = rH1 + 7
-    rQ1 = rH1 + 9
-    rT2 = rQ1 + nQ + 1: rH2 = rT2 + 1: rB1 = rH2 + 1
-    rH3 = rB1 + 9: rI1 = rH3 + 1
-    rK1 = rI1 + 9
+    ' ---- widths
+    For b = 0 To 2
+        c0 = 1 + b * (bw + 1)
+        ws.Columns(c0).ColumnWidth = 26
+        ws.Range(ws.Columns(c0 + 1), ws.Columns(c0 + nS + 1)).ColumnWidth = 9.5
+        If b < 2 Then ws.Columns(c0 + bw).ColumnWidth = 2.5
+    Next b
 
     ' ---- banner
-    ttl = ArT("62A 62D 644 64A 644 20 646 62A 627 626 62C 20 627 644 641 635 644 20 627 644 623 648 644 20 642 633 645 20") & gClassTitle
-    If gSecN > 1 Then ttl = ttl & " " & Format$(sec, "00")
-    MergeText ws, rT, 1, lastCol, ttl
-    StyleBanner ws.Range(ws.Cells(rT, 1), ws.Cells(rT, lastCol))
-    ws.Rows(rT).RowHeight = TITLE_ROW_HEIGHT
+    MergeText ws, 1, 1, totalCols, ArT("645 642 627 631 646 629 20 628 64A 646 20 627 644 623 642 633 627 645 20 2D 20 62A 62D 644 64A 644 20 646 62A 627 626 62C 20 627 644 641 635 644 20 627 644 623 648 644 20 2D 20") & gClassTitle
+    StyleBanner ws.Range(ws.Cells(1, 1), ws.Cells(1, totalCols))
+    ws.Rows(1).RowHeight = TITLE_ROW_HEIGHT
+    ws.Rows(2).RowHeight = 6
 
-    ' ---- counters
-    PutStrip ws, rC1, 1, 3, 4, ArT("627 644 62A 639 62F 627 62F"), "=COUNTIFS(" & sc & "," & secN & ")"
-    PutStrip ws, rC1, 5, 7, 8, ArT("627 644 645 639 64A 62F 648 646"), "=COUNTIFS(" & sc & "," & secN & "," & rp & "," & QT & yes & QT & ")"
-    PutStrip ws, rC2, 1, 3, 4, ArT("639 62F 62F 20 627 644 630 643 648 631"), "=COUNTIFS(" & sc & "," & secN & "," & sx & "," & QT & mal & QT & ")"
-    If gPEIdx > 0 Then
-        pe = ref(FIRST_NUM_COL + gPEIdx - 1)
-        f = "=COUNTIFS(" & sc & "," & secN & "," & pe & ",0)+COUNTIFS(" & sc & "," & secN & "," & pe & "," & QT & QT & ")"
-    Else
-        f = "=0"
-    End If
-    PutStrip ws, rC2, 5, 7, 8, ArT("627 644 645 639 641 64A 648 646"), f
-    PutStrip ws, rC3, 1, 3, 4, ArT("639 62F 62F 20 627 644 625 646 627 62B"), "=COUNTIFS(" & sc & "," & secN & "," & sx & "," & QT & fem & QT & ")"
-    ws.Rows(r0 + 4).RowHeight = 6
+    ' ---- three summary tables
+    rTop = 3
+    nTop = n + 1
+    If nTop < 8 Then nTop = 8
 
-    ' ---- table 1 : per subject
-    nc = lastCol - FIRST_NUM_COL + 1
-    PutHeaderRow ws, rH1, lastCol, ArT("627 644 645 648 627 62F"), hdrText
-    ReDim a1(1 To 7, 1 To nc)
-    For col = FIRST_NUM_COL To lastCol
-        j = col - FIRST_NUM_COL + 1
-        c = ref(col)
-        a1(1, j) = Subst("=IFERROR(AVERAGEIFS({C},{S},{N},{C},"">0""),"""")", "C", c, "S", sc, "N", secN)
-        a1(2, j) = Subst("=COUNTIFS({S},{N},{C},"">={P}"",{X},""{F}"")", "C", c, "S", sc, "N", secN, "P", pm, "X", sx, "F", fem)
-        a1(3, j) = Subst("=COUNTIFS({S},{N},{C},"">={P}"",{X},""{F}"")", "C", c, "S", sc, "N", secN, "P", pm, "X", sx, "F", mal)
-        a1(4, j) = Subst("=IFERROR(COUNTIFS({S},{N},{C},"">={P}"")/COUNTIFS({S},{N},{C},"">0""),"""")", "C", c, "S", sc, "N", secN, "P", pm)
-        a1(5, j) = Subst("=COUNTIFS({S},{N},{C},"">={P}"",{X},""{F}"")", "C", c, "S", sc, "N", secN, "P", pm, "X", rp, "F", yes)
-        a1(6, j) = Subst("=IFERROR(MAXIFS({C},{S},{N},{C},"">0""),"""")", "C", c, "S", sc, "N", secN)
-        a1(7, j) = Subst("=IFERROR(MINIFS({C},{S},{N},{C},"">0""),"""")", "C", c, "S", sc, "N", secN)
-    Next col
-    ws.Range(ws.Cells(rAvg, FIRST_NUM_COL), ws.Cells(rMin, lastCol)).Formula = a1
-    StyleGrid ws.Range(ws.Cells(rAvg, FIRST_NUM_COL), ws.Cells(rMin, lastCol))
-    ws.Range(ws.Cells(rAvg, FIRST_NUM_COL), ws.Cells(rAvg, lastCol)).NumberFormat = FMT_DEC
-    ws.Range(ws.Cells(rFem, FIRST_NUM_COL), ws.Cells(rMal, lastCol)).NumberFormat = FMT_COUNT
-    ws.Range(ws.Cells(rRate, FIRST_NUM_COL), ws.Cells(rRate, lastCol)).NumberFormat = FMT_PCT
-    ws.Range(ws.Cells(rRep, FIRST_NUM_COL), ws.Cells(rRep, lastCol)).NumberFormat = FMT_COUNT
-    ws.Range(ws.Cells(rMax, FIRST_NUM_COL), ws.Cells(rMin, lastCol)).NumberFormat = FMT_DEC
-    PutLabel ws, rAvg, ArT("645 639 62F 644 627 62A 20 627 644 645 648 627 62F")
-    PutLabel ws, rFem, ArT("639 62F 62F 20 627 644 62A 644 645 64A 630 627 62A 20 627 644 646 627 62C 62D 627 62A")
-    PutLabel ws, rMal, ArT("639 62F 62F 20 627 644 62A 644 627 645 64A 630 20 627 644 646 627 62C 62D 64A 646 20 28 630 643 648 631 29")
-    PutLabel ws, rRate, ArT("646 633 628 629 20 627 644 646 62C 627 62D 20 641 64A 20 643 644 20 645 627 62F 629")
-    PutLabel ws, rRep, ArT("639 62F 62F 20 627 644 62A 644 627 645 64A 630 20 627 644 645 639 64A 62F 64A 646 20 627 644 646 627 62C 62D 64A 646")
-    PutLabel ws, rMax, ArT("623 639 644 649 20 645 639 62F 644")
-    PutLabel ws, rMin, ArT("623 62F 646 649 20 645 639 62F 644")
-    ws.Rows(rMin + 1).RowHeight = 6
+    ' table 1 (mean) and table 2 (success rate)
+    For b = 0 To 1
+        c0 = 1 + b * (bw + 1)
+        If b = 0 Then
+            PutTableHead ws, rTop, c0, nS, ArT("645 642 627 631 646 629 20 645 62A 648 633 637 627 62A 20 627 644 645 648 627 62F 20 628 64A 646 20 627 644 623 642 633 627 645"), ArT("627 644 645 627 62F 629 20 2F 20 627 644 642 633 645")
+        Else
+            PutTableHead ws, rTop, c0, nS, ArT("645 642 627 631 646 629 20 646 633 628 20 627 644 646 62C 627 62D 20 641 64A 20 627 644 645 648 627 62F"), ArT("627 644 645 627 62F 629 20 2F 20 627 644 642 633 645")
+        End If
+        For i = 1 To n + 1
+            r = rTop + 1 + i
+            ws.Cells(r, c0).Value2 = nm(i)
+            For j = 1 To nS + 1
+                secN = SecText(j, nS)
+                If b = 0 Then
+                    ws.Cells(r, c0 + j).Formula = FMean(ref(i), sc, secN)
+                Else
+                    ws.Cells(r, c0 + j).Formula = FRate(ref(i), sc, secN)
+                End If
+            Next j
+        Next i
+        StyleGrid ws.Range(ws.Cells(rTop + 2, c0 + 1), ws.Cells(rTop + 1 + n + 1, c0 + nS + 1))
+        If b = 0 Then
+            ws.Range(ws.Cells(rTop + 2, c0 + 1), ws.Cells(rTop + 1 + n + 1, c0 + nS + 1)).NumberFormat = FMT_DEC
+        Else
+            ws.Range(ws.Cells(rTop + 2, c0 + 1), ws.Cells(rTop + 1 + n + 1, c0 + nS + 1)).NumberFormat = FMT_PCT
+        End If
+        StyleLabel ws.Range(ws.Cells(rTop + 2, c0), ws.Cells(rTop + 1 + n + 1, c0))
+        For i = 1 To n + 1
+            BestWorstRow ws.Range(ws.Cells(rTop + 1 + i, c0 + 1), ws.Cells(rTop + 1 + i, c0 + nS))
+        Next i
+        ' the average row is highlighted
+        With ws.Range(ws.Cells(rTop + 1 + n + 1, c0), ws.Cells(rTop + 1 + n + 1, c0 + nS + 1))
+            .Font.Bold = True
+            .Borders(xlEdgeTop).Weight = xlMedium
+        End With
+    Next b
 
-    ' ---- the "passed" cells
-    For i = 1 To nQ
-        PutLabel ws, rQ1 + i - 1, qLbl(i)
-        StyleGrid ws.Cells(rQ1 + i - 1, FIRST_NUM_COL)
-        ws.Cells(rQ1 + i - 1, FIRST_NUM_COL).NumberFormat = FMT_COUNT
-        ws.Cells(rQ1 + i - 1, FIRST_NUM_COL).Formula = qF(i)
-    Next i
-    ws.Rows(rQ1 + nQ).RowHeight = 6
-
-    ' ---- table 2 : distribution of the marks in bands
-    MergeText ws, rT2, 1, lastCol, ArT("62A 648 632 64A 639 20 627 644 645 639 62F 644 627 62A 20 62D 633 628 20 627 644 641 626 627 62A")
-    StyleTableTitle ws.Range(ws.Cells(rT2, 1), ws.Cells(rT2, lastCol))
-    ws.Rows(rT2).RowHeight = 36
-    PutHeaderRow ws, rH2, lastCol, ArT("627 644 641 626 627 62A 20 2F 20 627 644 645 648 627 62F"), hdrText
-
-    lows = Array(0, 7, 9, 10, 12, 14, 16, 18)
-    highs = Array(7, 9, 10, 12, 14, 16, 18, 0)
-    bandLbl = Array("07 >", "08.99 - 07", "09.99 - 09", "11.99 - 10", "13.99 - 12", "15.99 - 14", "17.99 - 16", "18 =<")
-    ReDim a2(1 To 8, 1 To nc)
+    ' table 3 : general data
+    c0 = 1 + 2 * (bw + 1)
+    PutTableHead ws, rTop, c0, nS, ArT("645 639 637 64A 627 62A 20 639 627 645 629"), ArT("627 644 628 64A 627 646 20 2F 20 627 644 642 633 645")
+    cLbl = Array(ArT("62A 639 62F 627 62F 20 627 644 642 633 645"), ArT("639 62F 62F 20 627 644 630 643 648 631"), ArT("639 62F 62F 20 627 644 625 646 627 62B"), _
+                 ArT("639 62F 62F 20 627 644 645 639 64A 62F 64A 646"), ArT("639 62F 62F 20 627 644 646 627 62C 62D 64A 646"), _
+                 ArT("646 633 628 629 20 646 62C 627 62D 20 627 644 630 643 648 631"), ArT("646 633 628 629 20 646 62C 627 62D 20 627 644 625 646 627 62B"), _
+                 ArT("646 633 628 629 20 646 62C 627 62D 20 627 644 645 639 64A 62F 64A 646"))
     For i = 0 To 7
-        For col = FIRST_NUM_COL To lastCol
-            j = col - FIRST_NUM_COL + 1
-            c = ref(col)
-            If i = 0 Then
-                f = Subst("=COUNTIFS({S},{N},{C},"">0"",{C},""<{H}"")", "S", sc, "N", secN, "C", c, "H", CStr(highs(i)))
-            ElseIf i = 7 Then
-                f = Subst("=COUNTIFS({S},{N},{C},"">={L}"")", "S", sc, "N", secN, "C", c, "L", CStr(lows(i)))
-            Else
-                f = Subst("=COUNTIFS({S},{N},{C},"">={L}"",{C},""<{H}"")", "S", sc, "N", secN, "C", c, "L", CStr(lows(i)), "H", CStr(highs(i)))
+        r = rTop + 2 + i
+        ws.Cells(r, c0).Value2 = cLbl(i)
+        For j = 1 To nS + 1
+            secN = SecText(j, nS)
+            Select Case i
+                Case 0
+                    If secN = "" Then
+                        f = "=COUNTIFS(" & sc & "," & QT & ">0" & QT & ")"
+                    Else
+                        f = "=COUNTIFS(" & sc & "," & secN & ")"
+                    End If
+                Case 1: f = FGroupCount(sx, male, sc, secN)
+                Case 2: f = FGroupCount(sx, fem, sc, secN)
+                Case 3: f = FGroupCount(rp, yes, sc, secN)
+                Case 4: f = "=COUNTIFS(" & CondP(sc, secN) & avg & "," & QT & ">=" & CStr(PASS_MARK) & QT & ")"
+                Case 5: f = FGroupRate(sx, male, avg, sc, secN)
+                Case 6: f = FGroupRate(sx, fem, avg, sc, secN)
+                Case 7: f = FGroupRate(rp, yes, avg, sc, secN)
+            End Select
+            ws.Cells(r, c0 + j).Formula = f
+        Next j
+    Next i
+    StyleGrid ws.Range(ws.Cells(rTop + 2, c0 + 1), ws.Cells(rTop + 9, c0 + nS + 1))
+    ws.Range(ws.Cells(rTop + 2, c0 + 1), ws.Cells(rTop + 6, c0 + nS + 1)).NumberFormat = FMT_COUNT
+    ws.Range(ws.Cells(rTop + 7, c0 + 1), ws.Cells(rTop + 9, c0 + nS + 1)).NumberFormat = FMT_PCT
+    StyleLabel ws.Range(ws.Cells(rTop + 2, c0), ws.Cells(rTop + 9, c0))
+    ApplyPassColors ws.Range(ws.Cells(rTop + 7, c0 + 1), ws.Cells(rTop + 9, c0 + nS + 1)), "=0.5", "=1"
+
+    ' ---- sub banner
+    ws.Rows(rTop + 2 + nTop).RowHeight = 8
+    rSub = rTop + 3 + nTop
+    MergeText ws, rSub, 1, totalCols, ArT("62A 641 635 64A 644 20 627 644 645 624 634 631 627 62A 20 627 644 625 62D 635 627 626 64A 629 20 644 643 644 20 645 627 62F 629")
+    StyleBanner ws.Range(ws.Cells(rSub, 1), ws.Cells(rSub, totalCols))
+    ws.Rows(rSub).RowHeight = TITLE_ROW_HEIGHT
+    ws.Rows(rSub + 1).RowHeight = 6
+    rGrid0 = rSub + 2
+
+    ' ---- one block per subject (+ the term 1 average)
+    lbl = Array(ArT("646 633 628 629 20 627 644 646 62C 627 62D"), ArT("627 644 645 62A 648 633 637 20 627 644 62D 633 627 628 64A"), _
+                ArT("627 644 648 633 64A 637"), ArT("627 644 645 646 648 627 644"), _
+                ArT("623 639 644 649 20 645 639 62F 644"), ArT("623 62F 646 649 20 645 639 62F 644"), ArT("627 644 645 62F 649"), _
+                ArT("627 644 627 646 62D 631 627 641 20 627 644 645 639 64A 627 631 64A"), ArT("627 644 62A 628 627 64A 646"), _
+                ArT("645 639 627 645 644 20 627 644 627 62E 62A 644 627 641"), ArT("62A 631 62A 64A 628 20 627 644 642 633 645 20 28 627 644 645 62A 648 633 637 29"))
+
+    For m = 0 To n
+        r0 = rGrid0 + (m \ 3) * BLOCK_ROWS
+        c0 = 1 + (m Mod 3) * (bw + 1)
+        If m < n Then
+            PutTableHead ws, r0, c0, nS, ArT("645 627 62F 629 20") & nm(m + 1), ArT("627 644 642 633 645")
+        Else
+            PutTableHead ws, r0, c0, nS, nm(m + 1), ArT("627 644 642 633 645")
+        End If
+        For k = 0 To IND_N - 1
+            rr(k) = r0 + 2 + k
+            ws.Cells(rr(k), c0).Value2 = lbl(k)
+        Next k
+        rngM = ws.Range(ws.Cells(rr(1), c0 + 1), ws.Cells(rr(1), c0 + nS)).Address(True, True)
+        For j = 1 To nS + 1
+            col = c0 + j
+            secN = SecText(j, nS)
+            mAddr = ws.Cells(rr(1), col).Address(False, False)
+            mxAddr = ws.Cells(rr(4), col).Address(False, False)
+            mnAddr = ws.Cells(rr(5), col).Address(False, False)
+            sdAddr = ws.Cells(rr(7), col).Address(False, False)
+            ws.Cells(rr(0), col).Formula = FRate(ref(m + 1), sc, secN)
+            ws.Cells(rr(1), col).Formula = FMean(ref(m + 1), sc, secN)
+            ws.Cells(rr(2), col).Formula = FMedian(ref(m + 1), sc, secN)
+            PutModeFormula ws.Cells(rr(3), col), FMode(ref(m + 1), sc, secN)
+            ws.Cells(rr(4), col).Formula = FMax(ref(m + 1), sc, secN)
+            ws.Cells(rr(5), col).Formula = FMin(ref(m + 1), sc, secN)
+            ws.Cells(rr(6), col).Formula = "=IFERROR(" & mxAddr & "-" & mnAddr & "," & QT & QT & ")"
+            ws.Cells(rr(7), col).Formula = FSd(ref(m + 1), sc, secN, mAddr)
+            ws.Cells(rr(8), col).Formula = "=IFERROR(" & sdAddr & "^2," & QT & QT & ")"
+            ws.Cells(rr(9), col).Formula = "=IFERROR(" & sdAddr & "/" & mAddr & "," & QT & QT & ")"
+            If j <= nS Then
+                ws.Cells(rr(10), col).Formula = "=IFERROR(RANK(" & mAddr & "," & rngM & ")," & QT & QT & ")"
             End If
-            a2(i + 1, j) = f
-        Next col
-        ws.Cells(rB1 + i, 1).NumberFormat = "@"
-    Next i
-    ws.Range(ws.Cells(rB1, FIRST_NUM_COL), ws.Cells(rB1 + 7, lastCol)).Formula = a2
-    StyleGrid ws.Range(ws.Cells(rB1, FIRST_NUM_COL), ws.Cells(rB1 + 7, lastCol))
-    ws.Range(ws.Cells(rB1, FIRST_NUM_COL), ws.Cells(rB1 + 7, lastCol)).NumberFormat = FMT_COUNT
-    For i = 0 To 7
-        PutLabel ws, rB1 + i, CStr(bandLbl(i))
-    Next i
-    ws.Rows(rB1 + 8).RowHeight = 6
+        Next j
+        StyleGrid ws.Range(ws.Cells(rr(0), c0 + 1), ws.Cells(rr(IND_N - 1), c0 + nS + 1))
+        StyleLabel ws.Range(ws.Cells(rr(0), c0), ws.Cells(rr(IND_N - 1), c0))
+        ws.Range(ws.Cells(rr(0), c0 + 1), ws.Cells(rr(0), c0 + nS + 1)).NumberFormat = FMT_PCT
+        ws.Range(ws.Cells(rr(1), c0 + 1), ws.Cells(rr(8), c0 + nS + 1)).NumberFormat = FMT_DEC
+        ws.Range(ws.Cells(rr(9), c0 + 1), ws.Cells(rr(9), c0 + nS + 1)).NumberFormat = FMT_PCT
+        ws.Range(ws.Cells(rr(10), c0 + 1), ws.Cells(rr(10), c0 + nS + 1)).NumberFormat = FMT_COUNT
+        ApplyPassColors ws.Range(ws.Cells(rr(0), c0 + 1), ws.Cells(rr(0), c0 + nS + 1)), "=0.5", "=1"
+        ApplyPassColors ws.Range(ws.Cells(rr(1), c0 + 1), ws.Cells(rr(1), c0 + nS + 1)), "=10", "=20"
+        ws.Rows(r0 + 2 + IND_N).RowHeight = 6
+    Next m
 
-    ' ---- table 3 : statistical indicators
-    PutHeaderRow ws, rH3, lastCol, ArT("627 644 645 624 634 631 20 627 644 625 62D 635 627 626 64A"), hdrText
-    ReDim a3(1 To 8, 1 To nc)
-    For col = FIRST_NUM_COL To lastCol
-        j = col - FIRST_NUM_COL + 1
-        c = ref(col)
-        mAddr = ws.Cells(rI1 + 1, col).Address(False, False)
-        sdAddr = ws.Cells(rI1 + 5, col).Address(False, False)
-        a3(1, j) = "=" & ws.Cells(rRate, col).Address(False, False)
-        a3(2, j) = "=" & ws.Cells(rAvg, col).Address(False, False)
-        a3(3, j) = Subst("=IFERROR(AGGREGATE(17,6,{C}/(({S}={N})*({C}>0)),2),"""")", "C", c, "S", sc, "N", secN)
-        a3(4, j) = ""
-        a3(5, j) = "=IFERROR(" & ws.Cells(rMax, col).Address(False, False) & "-" & ws.Cells(rMin, col).Address(False, False) & "," & QT & QT & ")"
-        a3(6, j) = Subst("=IFERROR(SQRT(SUMPRODUCT(({S}={N})*({C}>0)*({C}-{M})^2)/COUNTIFS({S},{N},{C},"">0"")),"""")", "C", c, "S", sc, "N", secN, "M", mAddr)
-        a3(7, j) = "=IFERROR(" & sdAddr & "^2," & QT & QT & ")"
-        a3(8, j) = "=IFERROR(" & sdAddr & "/" & mAddr & "," & QT & QT & ")"
-    Next col
-    ws.Range(ws.Cells(rI1, FIRST_NUM_COL), ws.Cells(rI1 + 7, lastCol)).Formula = a3
-    For col = FIRST_NUM_COL To lastCol
-        PutModeFormula ws.Cells(rI1 + 3, col), Subst("=IFERROR(MODE.SNGL(IF(({S}={N})*({C}>0),{C})),"""")", "C", ref(col), "S", sc, "N", secN)
-    Next col
-    StyleGrid ws.Range(ws.Cells(rI1, FIRST_NUM_COL), ws.Cells(rI1 + 7, lastCol))
-    ws.Range(ws.Cells(rI1, FIRST_NUM_COL), ws.Cells(rI1, lastCol)).NumberFormat = FMT_PCT
-    ws.Range(ws.Cells(rI1 + 1, FIRST_NUM_COL), ws.Cells(rI1 + 6, lastCol)).NumberFormat = FMT_DEC
-    ws.Range(ws.Cells(rI1 + 7, FIRST_NUM_COL), ws.Cells(rI1 + 7, lastCol)).NumberFormat = FMT_PCT
-    PutLabel ws, rI1, ArT("646 633 628 629 20 627 644 646 62C 627 62D")
-    PutLabel ws, rI1 + 1, ArT("627 644 645 62A 648 633 637 20 627 644 62D 633 627 628 64A")
-    PutLabel ws, rI1 + 2, ArT("627 644 648 633 64A 637")
-    PutLabel ws, rI1 + 3, ArT("627 644 645 646 648 627 644")
-    PutLabel ws, rI1 + 4, ArT("627 644 645 62F 649")
-    PutLabel ws, rI1 + 5, ArT("627 644 627 646 62D 631 627 641 20 627 644 645 639 64A 627 631 64A")
-    PutLabel ws, rI1 + 6, ArT("627 644 62A 628 627 64A 646")
-    PutLabel ws, rI1 + 7, ArT("645 639 627 645 644 20 627 644 627 62E 62A 644 627 641")
-    ws.Rows(rI1 + 8).RowHeight = 6
+    ' ---- print / view
+    On Error Resume Next
+    Application.PrintCommunication = False
+    With ws.PageSetup
+        .PrintArea = ws.Range(ws.Cells(1, 1), ws.Cells(rGrid0 + ((n \ 3) + 1) * BLOCK_ROWS - 2, totalCols)).Address
+        .Orientation = xlLandscape
+        .Zoom = False
+        .FitToPagesWide = 1
+        .FitToPagesTall = False
+        .CenterHorizontally = True
+    End With
+    Application.PrintCommunication = True
+    ws.Activate
+    ActiveWindow.DisplayGridlines = False
+    ActiveWindow.Zoom = 80
+    ws.Range("A1").Select
+    Err.Clear
+    On Error GoTo EH
 
-    ' ---- five classes
-    ReDim a4(1 To 5, 1 To nc)
-    For col = FIRST_NUM_COL To lastCol
-        j = col - FIRST_NUM_COL + 1
-        c = ref(col)
-        mAddr = ws.Cells(rI1 + 1, col).Address(False, False)
-        sdAddr = ws.Cells(rI1 + 5, col).Address(False, False)
-        a4(1, j) = Subst("=IFERROR(COUNTIFS({S},{N},{C},"">0"",{C},"">=""&({M}+1.5*{D}),{C},""<=20""),"""")", "C", c, "S", sc, "N", secN, "M", mAddr, "D", sdAddr)
-        a4(2, j) = Subst("=IFERROR(COUNTIFS({S},{N},{C},"">0"",{C},"">=""&({M}+0.5*{D}),{C},""<""&({M}+1.5*{D})),"""")", "C", c, "S", sc, "N", secN, "M", mAddr, "D", sdAddr)
-        a4(3, j) = Subst("=IFERROR(COUNTIFS({S},{N},{C},"">0"",{C},"">=""&({M}-0.5*{D}),{C},""<""&({M}+0.5*{D})),"""")", "C", c, "S", sc, "N", secN, "M", mAddr, "D", sdAddr)
-        a4(4, j) = Subst("=IFERROR(COUNTIFS({S},{N},{C},"">0"",{C},"">=""&({M}-1.5*{D}),{C},""<""&({M}-0.5*{D})),"""")", "C", c, "S", sc, "N", secN, "M", mAddr, "D", sdAddr)
-        a4(5, j) = Subst("=IFERROR(COUNTIFS({S},{N},{C},"">0"",{C},""<""&({M}-1.5*{D})),"""")", "C", c, "S", sc, "N", secN, "M", mAddr, "D", sdAddr)
-    Next col
-    ws.Range(ws.Cells(rK1, FIRST_NUM_COL), ws.Cells(rK1 + 4, lastCol)).Formula = a4
-    StyleGrid ws.Range(ws.Cells(rK1, FIRST_NUM_COL), ws.Cells(rK1 + 4, lastCol))
-    ws.Range(ws.Cells(rK1, FIRST_NUM_COL), ws.Cells(rK1 + 4, lastCol)).NumberFormat = FMT_COUNT
-    PutLabel ws, rK1, ArT("627 644 641 626 629 20 30 31")
-    PutLabel ws, rK1 + 1, ArT("627 644 641 626 629 20 30 32")
-    PutLabel ws, rK1 + 2, ArT("627 644 641 626 629 20 30 33")
-    PutLabel ws, rK1 + 3, ArT("627 644 641 626 629 20 30 34")
-    PutLabel ws, rK1 + 4, ArT("627 644 641 626 629 20 30 35")
+    BuildCompareSheet = True
+    Exit Function
+EH:
+    errText = "BuildCompareSheet: " & Err.Number & " : " & Err.Description
+    Err.Clear
+End Function
 
-    ApplyPassColors ws.Range(ws.Cells(rAvg, FIRST_NUM_COL), ws.Cells(rAvg, lastCol)), "=10", "=20"
-    ApplyPassColors ws.Range(ws.Cells(rRate, FIRST_NUM_COL), ws.Cells(rRate, lastCol)), "=0.5", "=1"
-    ApplyPassColors ws.Range(ws.Cells(rI1, FIRST_NUM_COL), ws.Cells(rI1, lastCol)), "=0.5", "=1"
-    ApplyPassColors ws.Range(ws.Cells(rI1 + 1, FIRST_NUM_COL), ws.Cells(rI1 + 1, lastCol)), "=10", "=20"
-
-    BuildBlock = rK1 + 5 + 2
-End Function
-
-'==============================================================================
-' SMALL HELPERS
-'==============================================================================
-Public Sub PutModeFormula(ByVal cel As Range, ByVal f As String)
+' ---- Private copies of two Analysis01 helpers (this module must not call Analysis01) ----
+Private Sub PutModeFormula(ByVal cel As Range, ByVal f As String)
     Dim done As Boolean
     On Error Resume Next
     CallByName cel, "Formula2", VbLet, f
@@ -382,7 +391,7 @@ Public Sub PutModeFormula(ByVal cel As Range, ByVal f As String)
     On Error GoTo 0
 End Sub
 
-Public Sub ApplyPassColors(ByVal rng As Range, ByVal limitF As String, ByVal topF As String)
+Private Sub ApplyPassColors(ByVal rng As Range, ByVal limitF As String, ByVal topF As String)
     Dim fc As Object
     On Error Resume Next
     rng.FormatConditions.Delete
@@ -394,57 +403,6 @@ Public Sub ApplyPassColors(ByVal rng As Range, ByVal limitF As String, ByVal top
     fc.Interior.Color = RGB(0, 128, 64)
     fc.Font.Color = RGB(255, 255, 255)
     fc.Font.Bold = True
-    Err.Clear
-End Sub
-
-Private Sub PutStrip(ByVal ws As Worksheet, ByVal r As Long, ByVal c1 As Long, ByVal c2 As Long, _
-                     ByVal cv As Long, ByVal lbl As String, ByVal fml As String)
-    MergeText ws, r, c1, c2, lbl
-    StyleHead ws.Range(ws.Cells(r, c1), ws.Cells(r, c2))
-    With ws.Cells(r, cv)
-        .Formula = fml
-        .NumberFormat = FMT_COUNT
-        .Font.Name = gFontNum: .Font.Size = 15: .Font.Bold = True
-        .Interior.Color = RGB(221, 235, 247)
-        .HorizontalAlignment = xlCenter: .VerticalAlignment = xlCenter
-        .Borders.LineStyle = xlContinuous: .Borders.Weight = xlThin
-    End With
-    ws.Rows(r).RowHeight = DATA_ROW_HEIGHT
-End Sub
-
-Private Sub PutHeaderRow(ByVal ws As Worksheet, ByVal r As Long, ByVal lastCol As Long, _
-                         ByVal lbl As String, ByRef hdrText() As String)
-    Dim c As Long
-    ws.Range(ws.Cells(r, FIRST_NUM_COL), ws.Cells(r, lastCol)).NumberFormat = "@"
-    For c = FIRST_NUM_COL To lastCol
-        ws.Cells(r, c).Value2 = hdrText(c)
-    Next c
-    StyleHead ws.Range(ws.Cells(r, 1), ws.Cells(r, lastCol))
-    ws.Range(ws.Cells(r, FIRST_NUM_COL), ws.Cells(r, lastCol)).Orientation = 90
-    MergeText ws, r, 1, 3, lbl
-    ws.Range(ws.Cells(r, 1), ws.Cells(r, 3)).Font.Size = 16
-    ws.Rows(r).RowHeight = HDR_ROW_HEIGHT
-End Sub
-
-Private Sub SetColumnWidths(ByVal ws As Worksheet, ByVal lastCol As Long)
-    ws.Columns(1).ColumnWidth = ID_COL_WIDTH
-    ws.Columns(2).ColumnWidth = 22
-    ws.Columns(3).ColumnWidth = DATE_COL_MIN_WIDTH
-    ws.Range(ws.Columns(FIRST_NUM_COL), ws.Columns(lastCol)).ColumnWidth = NUM_COL_WIDTH
-End Sub
-
-Private Sub SetupPrint(ByVal ws As Worksheet, ByVal lastRow As Long, ByVal lastCol As Long)
-    On Error Resume Next
-    Application.PrintCommunication = False
-    With ws.PageSetup
-        .PrintArea = ws.Range(ws.Cells(1, 1), ws.Cells(lastRow, lastCol)).Address
-        .Orientation = xlPortrait
-        .Zoom = False
-        .FitToPagesWide = 1
-        .FitToPagesTall = False
-        .CenterHorizontally = True
-    End With
-    Application.PrintCommunication = True
     Err.Clear
 End Sub
 
@@ -1653,12 +1611,13 @@ EH:
 End Function
 
 '==============================================================================
-' STANDALONE ENTRY POINT: Run_Analysis01
+' STANDALONE ENTRY POINT: Run_Compare01
 '
 ' - INPUT : the RAW files in \Source01\ are read directly, with the embedded raw-source
 '   layer above (an exact copy of the Collector01 / Data01 engine). Nothing has to run
-'   before this procedure: it does not use Data01, Compare01, CartTec01 or Build_All.
-' - OUTPUT: one workbook per class group, with the sheets Data + Analysis01 (named <stem>_Analysis.xlsx).
+'   before this procedure: it does not use Data01, Analysis01, CartTec01 or Build_All.
+' - OUTPUT: one workbook per MULTI-SECTION class group, with the sheets Data + AnalyseCompare
+'   (named <stem>_Compare.xlsx). Single-section groups have nothing to compare and are skipped.
 '   The files are written INSIDE the WORK FOLDER next to the tool (name stored as hex
 '   code points in WORK_FOLDER_CODES). The folder is looked up by that name next to the
 '   tool and is created when it does not exist.
@@ -1666,7 +1625,7 @@ End Function
 '   because the extra columns of the Data sheet are meant to be completed by hand.
 ' - Like Collector01, loading Source01 converts .xls/.xlsb/.xlsm to .xlsx and moves the
 '   originals to Source01\_Original.
-' - Needs only the shared module modBiuldAnalysisfilesCommon01 (constants, styles).
+' - Needs only the shared module modAnalysisBuilderCommon01 (constants, styles).
 '==============================================================================
 Private Function WorkFolderName() As String
     Dim parts() As String, i As Long, t As String
@@ -1687,9 +1646,9 @@ Private Function ResolveWorkFolder() As String
     ResolveWorkFolder = p & Application.PathSeparator
 End Function
 
-' Every group has an analysis.
+' A comparison needs at least two sections.
 Private Function IsApplicable01(ByVal titles As Variant) As Boolean
-    IsApplicable01 = True
+    IsApplicable01 = (UBound(titles) - LBound(titles) + 1) >= 2
 End Function
 
 Private Function BuildOneFile01(ByVal stem As String, ByVal titles As Variant, ByVal sheetIndex As Object, _
@@ -1701,7 +1660,7 @@ Private Function BuildOneFile01(ByVal stem As String, ByVal titles As Variant, B
     Set wbNew = Workbooks.Add(xlWBATWorksheet)
 
     If Not BuildDataSheet(wbNew, sheetIndex, titles, stem, errText) Then Err.Raise vbObjectError + 921, RUN_TITLE, errText
-    If Not BuildAnalysisSheets(wbNew, CoreKeysFor(stem), errText) Then Err.Raise vbObjectError + 922, RUN_TITLE, errText
+    If Not BuildCompareSheet(wbNew, errText) Then Err.Raise vbObjectError + 922, RUN_TITLE, errText
 
     On Error Resume Next
     wbNew.Worksheets(DATA_SHEET).Activate
@@ -1736,7 +1695,7 @@ Private Sub WriteRunLog(ByVal path As String, ByVal txt As String)
     Err.Clear
 End Sub
 
-Public Sub Run_Analysis01()
+Public Sub Run_Compare01()
     Dim map As Object, sheetIndex As Object, dupKeys As Object, wbGlobal As Workbook
     Dim key As Variant, stem As String, titles As Variant, why As String
     Dim srcReport As String, outDir As String, errMsg As String, savedPath As String, firstErr As String
@@ -1798,7 +1757,7 @@ Public Sub Run_Analysis01()
         titles = map(key)
         If Not IsApplicable01(titles) Then
             skipCount = skipCount + 1
-            logText = logText & "SKIP   " & stem & "  (n/a)" & vbCrLf
+            logText = logText & "SKIP   " & stem & "  (single section: nothing to compare)" & vbCrLf
             GoTo NextKey
         End If
         idx = idx + 1
@@ -1840,11 +1799,11 @@ NextKey:
     If gFontNotes <> "" Then logText = logText & String$(70, "-") & vbCrLf & "Fonts replaced:" & gFontNotes & vbCrLf
     logText = logText & String$(70, "-") & vbCrLf & "Created " & okCount & " / " & total & " in " & Format$(secs, "0") & " s" & vbCrLf
 
-    logPath = NextFreePath(outDir, "AnalysisLog_" & Format$(Now, "yyyymmdd_hhnnss"), ".txt")
+    logPath = NextFreePath(outDir, "CompareLog_" & Format$(Now, "yyyymmdd_hhnnss"), ".txt")
     WriteRunLog logPath, logText
 
     msg = "Created : " & okCount & " / " & total & "   (" & Format$(secs, "0") & " s)" & vbCrLf & "Folder  : " & outDir
-    If skipCount > 0 Then msg = msg & vbCrLf & "Skipped : " & skipCount & " (n/a)"
+    If skipCount > 0 Then msg = msg & vbCrLf & "Skipped : " & skipCount & " (single section: nothing to compare)"
     If failCount > 0 Then msg = msg & vbCrLf & vbCrLf & "NOT created (" & failCount & "):" & vbCrLf & failBrief
     msg = msg & vbCrLf & "Details : " & Mid$(logPath, InStrRev(logPath, Application.PathSeparator) + 1)
     MsgBox Left$(msg, 1000), IIf(failCount = 0, vbInformation, vbExclamation), RUN_TITLE

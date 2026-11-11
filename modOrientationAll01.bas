@@ -24,9 +24,11 @@ Private Const TITLE_TXT As String = "Term 01 Orientation"
 Private Const SRC_FOLDER As String = "Source01"
 
 Private m_busy As Boolean
+Private m_runSucceeded As Boolean
 
 Public Sub ResetOrientationState()
     m_busy = False
+    m_runSucceeded = False
     On Error Resume Next
     modTransfer01.SetSilentMode False
     modStreamPreferences01.SetSilentMode False
@@ -40,12 +42,16 @@ Public Sub ResetOrientationState()
     On Error GoTo 0
 End Sub
 
+Public Function OrientationAll01Succeeded() As Boolean
+    OrientationAll01Succeeded = m_runSucceeded
+End Function
+
 Public Sub Run_OrientationAll01()
     Dim base As String, problem As String, t0 As Date, outPath As String, secs As Long
     Dim finalMsg As String
 
-    ' Always clear any stale lock from a previously interrupted session
-    m_busy = False
+    If m_busy Then Exit Sub
+    m_runSucceeded = False
 
     base = ThisWorkbook.Path
     If Len(base) = 0 Then
@@ -111,6 +117,7 @@ Public Sub Run_OrientationAll01()
                "[3] Orientation:" & vbCrLf & modOrientation01.LastReport() & vbCrLf & vbCrLf & _
                "[4] Export Results:" & vbCrLf & modOrientationResults01.LastReport()
 
+    m_runSucceeded = True
     MsgBox finalMsg, vbInformation, TITLE_TXT
 
 Finished:

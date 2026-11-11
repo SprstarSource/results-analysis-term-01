@@ -1,23 +1,14 @@
-Attribute VB_Name = "modCollector"
+Attribute VB_Name = "modCollector01"
 Option Explicit
 
 '==============================================================================
-' Module  : modCollector
+' Module  : modCollector01
 ' Purpose : 1) Auto-convert (.xls, .xlsb, .xlsm) inside \Source01\ to .xlsx
 '              (originals are moved to \Source01\_Original, never deleted)
-'           2) Collect the source files into ONE workbook named "first term results"
-'              (Arabic name stored as hex code points in RESULTS_FILE_CODES) as Dynamic Tables;
+'           2) Collect all source files into Term01Results.xlsx as Dynamic Tables;
 '              the file is written INSIDE the work folder next to the tool (name stored as
 '              hex code points in WORK_FOLDER_CODES): the folder is looked up by name and
 '              created when it does not exist
-'           3) Only real MARKS files are collected, with TWO checks that work together:
-'                CHECK 1 (structure): row 6 must hold the identity headers - B name, C birth
-'                          date, D sex. The stream-wishes file (headers in row 2) fails here.
-'                CHECK 2 (marks): from column F, row 7 onward the cells must be averages
-'                          (numbers, or text that stands for a number - converted to a real
-'                          number). A file that holds mostly text there fails.
-'              A file that fails is skipped, never stops the run, and the report names the
-'              check that rejected it. Files are never recognised by their name.
 ' Entry   : CollectTerm01Results()
 '==============================================================================
 
@@ -30,14 +21,9 @@ Private Const FONT_ARABIC          As String = "Arabic UI Display Light"
 Private Const FONT_NUMERIC         As String = "Bahnschrift SemiBold"
 Private Const FONT_FALLBACK        As String = "Calibri"
 Private Const ARCHIVE_FOLDER       As String = "_Original"
-Private Const FIRST_MARK_COL       As Long = 6      ' column F : first average column
-Private Const FIRST_MARK_ROW       As Long = 7      ' row 7   : first student row
 
 ' Work folder name (hex code points): looked up next to the tool, created when missing
 Private Const WORK_FOLDER_CODES    As String = "645 639 627 644 62C 629 20 628 64A 627 646 627 62A 20 627 644 641 635 644 20 30 31"
-
-' Name of the produced workbook (hex code points, ".xlsx" is added in code)
-Private Const RESULTS_FILE_CODES   As String = "646 62A 627 626 62C 20 627 644 641 635 644 20 627 644 623 648 644"
 
 Private Const PREFERRED_FONT As String = "Cairo"
 Private Const FALLBACK_FONT  As String = "Arial"
@@ -160,7 +146,7 @@ Private Sub ConvertSourceFilesToXLSX(ByVal targetFolderPath As String, _
 End Sub
 
 ' ==============================================================================
-' STEP 2: FONT CHECK & COLLECTION INTO THE RESULTS WORKBOOK
+' STEP 2: FONT CHECK & COLLECTION INTO Term01Results.xlsx
 ' ==============================================================================
 ' Checks the Windows font registry (HKLM + HKCU). If the check itself cannot run,
 ' returns True (keeps the requested font instead of forcing the fallback).
@@ -202,134 +188,6 @@ Private Sub SetupFonts()
     If FontExists(FONT_NUMERIC) Then g_ActiveNumericFont = FONT_NUMERIC Else g_ActiveNumericFont = FONT_FALLBACK
 End Sub
 
-' ==============================================================================
-' MARKS CHECK : averages must start at F7 (a wishes file holds text there)
-' ==============================================================================
-' Text that stands for a number ("12.5", "12,5", Arabic-Indic digits, stray spaces or
-' hidden direction marks) -> True and the value in d. Any real text -> False.
-Private Function TextToMark(ByVal s As String, ByRef d As Double) As Boolean
-    Dim i As Long, code As Long, res As String
-    Dim digits As Long, dots As Long
-
-    For i = 1 To Len(s)
-        code = AscW(Mid$(s, i, 1))
-        If code < 0 Then code = code + 65536
-        Select Case code
-            Case 48 To 57
-                res = res & ChrW(code): digits = digits + 1
-            Case &H660 To &H669
-                res = res & ChrW(code - &H660 + 48): digits = digits + 1
-            Case &H6F0 To &H6F9
-                res = res & ChrW(code - &H6F0 + 48): digits = digits + 1
-            Case 46, 44, &H66B
-                res = res & ".": dots = dots + 1
-            Case 45, &H2212
-                If Len(res) > 0 Then Exit Function
-                res = "-"
-            Case 43
-                If Len(res) > 0 Then Exit Function
-            Case 32, 160, &H200E, &H200F, &H202A To &H202E, &HFEFF&
-                ' blank / hidden direction mark: ignored
-            Case Else
-                Exit Function
-        End Select
-    Next i
-    If digits = 0 Or dots > 1 Then Exit Function
-    d = Val(res)                        ' Val always reads "." (independent of the regional settings)
-    TextToMark = True
-End Function
-
-' Scans the score block (column F onward, from row 7). Text that stands for a number is
-' converted IN the array to a real number ("convert to number"). Returns how many cells
-' are numbers and how many are real texts.
-Private Sub PrepareMarksBlock(ByRef arr As Variant, ByRef numCount As Long, ByRef textCount As Long)
-    Dim r As Long, c As Long, v As Variant, d As Double, t As String
-
-    numCount = 0: textCount = 0
-    If UBound(arr, 2) < FIRST_MARK_COL Then Exit Sub
-    For r = FIRST_MARK_ROW - DATA_START_ROW + 1 To UBound(arr, 1)      ' array row 1 = header row
-        For c = FIRST_MARK_COL To UBound(arr, 2)
-            v = arr(r, c)
-            Select Case VarType(v)
-                Case vbEmpty, vbNull
-                    ' empty cell
-                Case vbDouble, vbSingle, vbInteger, vbLong, vbCurrency, vbDecimal
-                    numCount = numCount + 1
-                Case vbString
-                    t = Trim$(Replace(CStr(v), ChrW(160), " "))
-                    If Len(t) > 0 Then
-                        If TextToMark(CStr(v), d) Then
-                            arr(r, c) = d
-                            numCount = numCount + 1
-                        Else
-                            textCount = textCount + 1
-                        End If
-                    End If
-                Case Else
-                    textCount = textCount + 1        ' dates, booleans, errors
-            End Select
-        Next c
-    Next r
-End Sub
-
-' ==============================================================================
-' CHECK 1 - STRUCTURE. A results file has its identity headers in row
-' DATA_START_ROW: B = name, C = birth date, D = sex. A file with any other layout
-' (for example the wishes file, whose headers are in row 2) is skipped and named
-' in the report; it never stops the run and it is never recognised by its file name.
-' ==============================================================================
-Private Function SrcHasResultsLayout(ByVal ws As Worksheet) As Boolean
-    SrcHasResultsLayout = SrcHeaderHas(ws, 2, "627 633 645") _
-                      And SrcHeaderHas(ws, 3, "645 64A 644 627 62F") _
-                      And SrcHeaderHas(ws, 4, "62C 646 633")
-End Function
-
-Private Function SrcHeaderHas(ByVal ws As Worksheet, ByVal col As Long, ByVal wordCodes As String) As Boolean
-    Dim v As Variant, h As String, w As String
-    On Error Resume Next
-    v = ws.Cells(DATA_START_ROW, col).MergeArea.Cells(1, 1).Value2
-    On Error GoTo 0
-    If IsError(v) Or IsNull(v) Or IsEmpty(v) Then Exit Function
-    h = SrcNormHeader(CStr(v))
-    w = SrcNormHeader(SrcWord(wordCodes))
-    SrcHeaderHas = (Len(w) > 0 And InStr(h, w) > 0)
-End Function
-
-Private Function SrcWord(ByVal codes As String) As String
-    Dim p As Variant, s As String
-    For Each p In Split(codes, " ")
-        If Len(p) > 0 Then s = s & ChrW(CLng("&H" & p))
-    Next p
-    SrcWord = s
-End Function
-
-Private Function SrcNormHeader(ByVal t As String) As String
-    t = Replace(t, ChrW(&H623), ChrW(&H627))    ' alef variants -> alef
-    t = Replace(t, ChrW(&H625), ChrW(&H627))
-    t = Replace(t, ChrW(&H622), ChrW(&H627))
-    t = Replace(t, ChrW(&H649), ChrW(&H64A))    ' alef maksura -> yaa
-    t = Replace(t, ChrW(&H629), ChrW(&H647))    ' taa marbuta -> haa
-    t = Replace(t, ChrW(&H640), "")             ' tatweel
-    t = Replace(t, ChrW(&HA0), " ")
-    t = Replace(t, ChrW(&H200E), "")
-    t = Replace(t, ChrW(&H200F), "")
-    t = Replace(t, vbTab, " ")
-    t = Replace(t, vbLf, " ")
-    t = Replace(t, vbCr, " ")
-    SrcNormHeader = LCase$(Trim$(t))
-End Function
-
-' True when the workbook has the sheets of the wishes file (only used to word the report)
-Private Function SrcHasWishSheets(ByVal wb As Workbook) As Boolean
-    Dim ws As Worksheet
-    For Each ws In wb.Worksheets
-        If StrComp(ws.Name, "Tecno", vbTextCompare) = 0 Or StrComp(ws.Name, "Litr", vbTextCompare) = 0 Then
-            SrcHasWishSheets = True
-            Exit Function
-        End If
-    Next ws
-End Function
-
 Public Function ProcessSingleSourceFile(ByRef wbResult As Workbook, _
                                         ByVal SourcePath As String, _
                                         ByVal fileName As String, _
@@ -341,7 +199,6 @@ Public Function ProcessSingleSourceFile(ByRef wbResult As Workbook, _
     Dim idLastCol As Long, lastFind As Range
     Dim tbl As ListObject, tblRange As Range, seenHeaders As Object
     Dim h As Long, headerText As String, genCounter As Long
-    Dim numCount As Long, textCount As Long
 
     ProcessSingleSourceFile = False
     ReasonOut = ""
@@ -380,38 +237,6 @@ Public Function ProcessSingleSourceFile(ByRef wbResult As Workbook, _
         wbSource.Close SaveChanges:=False: Exit Function
     End If
 
-    ' ---- CHECK 1 (structure): identity headers in row 6. Not a results layout -> skipped, named in the report
-    If Not SrcHasResultsLayout(wsSource) Then
-        If SrcHasWishSheets(wbSource) Then
-            ReasonOut = "CHECK 1 (headers) - WISHES FILE layout (sheets Tecno / Litr), not a results file, ignored"
-        Else
-            ReasonOut = "CHECK 1 (headers) - DIFFERENT_STRUCTURE (identity headers not found in row " & DATA_START_ROW & "), ignored"
-        End If
-        wbSource.Close SaveChanges:=False: Exit Function
-    End If
-
-    ' ---- Read source data (before any sheet is created in the result workbook)
-    On Error Resume Next
-    DataArr = wsSource.Range(wsSource.Cells(DATA_START_ROW, 1), wsSource.Cells(LastRow, LastCol)).Value
-    errNum = Err.Number: errDesc = Err.Description: Err.Clear
-    On Error GoTo EH
-
-    If errNum <> 0 Or Not IsArray(DataArr) Then
-        ReasonOut = "DATA_READ_FAILED | " & errDesc
-        wbSource.Close SaveChanges:=False
-        Exit Function
-    End If
-
-    ' ---- Marks files only: averages must start at F7. Text that stands for a number is
-    '      converted to a real number; a file whose F7 onward is text (wishes file) is skipped.
-    PrepareMarksBlock DataArr, numCount, textCount
-    If numCount = 0 Or numCount <= textCount Then
-        ReasonOut = "CHECK 2 (marks) - from F" & FIRST_MARK_ROW & " onward the cells are text, not averages" & _
-                    " (numbers: " & numCount & ", texts: " & textCount & "), ignored"
-        wbSource.Close SaveChanges:=False
-        Exit Function
-    End If
-
     On Error Resume Next
     Set wsResult = wbResult.Sheets.Add(After:=wbResult.Sheets(wbResult.Sheets.Count))
     errNum = Err.Number: errDesc = Err.Description: Err.Clear
@@ -427,6 +252,19 @@ Public Function ProcessSingleSourceFile(ByRef wbResult As Workbook, _
     On Error GoTo EH
 
     wsResult.DisplayRightToLeft = True
+
+    ' ---- Read source data
+    On Error Resume Next
+    DataArr = wsSource.Range(wsSource.Cells(DATA_START_ROW, 1), wsSource.Cells(LastRow, LastCol)).Value
+    errNum = Err.Number: errDesc = Err.Description: Err.Clear
+    On Error GoTo EH
+
+    If errNum <> 0 Or Not IsArray(DataArr) Then
+        ReasonOut = "DATA_READ_FAILED | " & errDesc
+        wbSource.Close SaveChanges:=False
+        wsResult.Delete
+        Exit Function
+    End If
 
     lastDataRow = 1 + UBound(DataArr, 1)     ' header at row 2 + data rows
 
@@ -591,22 +429,13 @@ End Sub
 ' ==============================================================================
 ' MAIN ENTRY POINT (Button 1)
 ' ==============================================================================
-Private Function HexText(ByVal codes As String) As String
+Private Function WorkFolderName() As String
     Dim parts() As String, i As Long, t As String
-    parts = Split(codes, " ")
+    parts = Split(WORK_FOLDER_CODES, " ")
     For i = 0 To UBound(parts)
         t = t & ChrW(CLng("&H" & parts(i)))
     Next i
-    HexText = t
-End Function
-
-Private Function WorkFolderName() As String
-    WorkFolderName = HexText(WORK_FOLDER_CODES)
-End Function
-
-' File name of the produced workbook (Arabic name from hex code points + .xlsx)
-Private Function ResultsFileName() As String
-    ResultsFileName = HexText(RESULTS_FILE_CODES) & ".xlsx"
+    WorkFolderName = t
 End Function
 
 ' Finds the work folder next to the tool by NAME, creates it when missing. Returns its path
@@ -653,7 +482,7 @@ Public Sub CollectTerm01Results()
         MsgBox "The work folder could not be created:" & vbCrLf & _
                ThisWorkbook.Path & "\" & WorkFolderName(), vbExclamation, "Error": Exit Sub
     End If
-    outPath = outDir & ResultsFileName()
+    outPath = outDir & "Term01Results.xlsx"
 
     oldCalc = Application.Calculation
     oldSec = Application.AutomationSecurity
@@ -667,7 +496,7 @@ Public Sub CollectTerm01Results()
     ' 1) Silent auto-conversion inside \Source01\ first
     ConvertSourceFilesToXLSX srcPath, convTotal, convSuccess, convFailed
 
-    ' 2) Collect the marks files into the results workbook
+    ' 2) Collect all files into Term01Results.xlsx
     Set wbResult = Workbooks.Add
     Do While wbResult.Sheets.Count > 1: wbResult.Sheets(wbResult.Sheets.Count).Delete: Loop
 
