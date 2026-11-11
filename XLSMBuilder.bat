@@ -26,14 +26,6 @@ $PanelSheetPatterns = @("*Panel*", "*$ArabicPanel*")
 $DefaultThisWorkbookCode = @'
 Option Explicit
 
-Private Sub Workbook_Open()
-    On Error GoTo EH
-    modBuildPanel.RefreshPanelState
-    Exit Sub
-EH:
-    MsgBox "Panel error " & Err.Number & ": " & Err.Description, vbExclamation
-End Sub
-
 Private Sub Workbook_Activate()
     On Error Resume Next
     modBuildPanel.RefreshPanelState
@@ -129,6 +121,28 @@ try {
     # Replace the root (or any suffixed name) with the real module name
     if ($PanelName) {
         $code = [regex]::Replace($code, "\b$PanelRoot\w*(?=\s*\.)", $PanelName)
+        $openPattern = "(?ims)^\s*Private\s+Sub\s+Workbook_Open\b.*?^\s*End\s+Sub"
+        $openMatch = [regex]::Match($code, $openPattern)
+        if ($openMatch.Success) {
+            $callPattern = "(?im)^\s*" + [regex]::Escape($PanelName) + "\s*\.\s*RefreshPanelState\s*\r?\n"
+            $openCode = [regex]::Replace($openMatch.Value, $callPattern, "", 1)
+            $code = $code.Substring(0, $openMatch.Index) + $openCode + $code.Substring($openMatch.Index + $openMatch.Length)
+        }
+        $activatePattern = "(?ims)^\s*Private\s+Sub\s+Workbook_Activate\b.*?^\s*End\s+Sub"
+        $activateMatch = [regex]::Match($code, $activatePattern)
+        if (-not $activateMatch.Success) {
+            $code += "`r`nPrivate Sub Workbook_Activate()`r`n    On Error Resume Next`r`n    $PanelName.RefreshPanelState`r`n    On Error GoTo 0`r`nEnd Sub`r`n"
+        } else {
+            $activateCode = $activateMatch.Value
+            $calls = [regex]::Matches($activateCode, $callPattern)
+            if ($calls.Count -gt 1) {
+                $kept = $calls[0].Value
+                $tailStart = $calls[0].Index + $calls[0].Length
+                $tail = [regex]::Replace($activateCode.Substring($tailStart), $callPattern, "")
+                $activateCode = $activateCode.Substring(0, $calls[0].Index) + $kept + $tail
+                $code = $code.Substring(0, $activateMatch.Index) + $activateCode + $code.Substring($activateMatch.Index + $activateMatch.Length)
+            }
+        }
     }
     $cm.AddFromString($code)
 
