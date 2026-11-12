@@ -13,10 +13,10 @@ Option Explicit
 '        Gen + one sheet per class that has data + data-transfer summary
 '      - semester average computed here (coefficients per level and class)
 '      - class tables sorted by average (descending), analysis tables below
-'      - analysis cells are fixed values (no formulas)
-'   4) saves each file INSIDE the work folder next to this workbook (name stored as hex code
-'      points in WORK_FOLDER_CODES; looked up by name, created when it does not exist):
-'      <Arabic name of the level> .xlsx / _01 / _02 ...
+'      - analysis cells are fixed values, except the live cells of Gen (third year only)
+'      Gen of first / second year: sections 1-2.  Gen of third year: 1-2 + 3 (last five seasons).
+'   4) saves each file in the output folder next to this workbook (created when missing):
+'        <Arabic name of the level> .xlsx / _01 / _02 ...   (name: OutputFolderName / Ar("out_nameN"))
 '   Subject recognition: exact keywords first; if none matches, a one-wrong-letter
 '   fallback (unique subject only) - every such guess is written in the transfer sheet.
 ' All Arabic text is stored as hex code points (ArHex) so this file is pure ASCII.
@@ -27,14 +27,13 @@ Private Const SOURCE_FOLDER_NAME As String = "ExamenSource01"
 Private Const SRC_HEADER_ROW As Long = 8
 Private Const DATA_START_ROW As Long = 9
 Private Const MAX_STUDENTS As Long = 60
-' Work folder name (hex code points): looked up next to the tool, created when missing
-Private Const WORK_FOLDER_CODES As String = "645 639 627 644 62C 629 20 628 64A 627 646 627 62A 20 627 644 641 635 644 20 30 31"
 Private Const NCOH As Long = 17          ' classes: 1..6 third year, 7..12 second year, 13..17 first year
 Private Const MAX_SUBJ As Long = 14      ' subjects per class (the largest class uses 12)
 Private Const MARK_OFFSET As Long = 0
 Private Const ABSENT_IF_NO_TEST_COLUMN As Boolean = False
 Private Const BLOCK_ON_ROSTER_MISMATCH As Boolean = True
 Private Const PASS_MARK As Double = 10
+Private Const SEASON_START_MONTH As Long = 9   ' season = September .. August (third-year past-seasons table)
 
 ' ---------------- layout (same values as modBacEtab / modBacAnalysis) ----------------
 Private Const TITLE_ROW As Long = 1
@@ -119,7 +118,7 @@ Public Sub Run_ExamenAnalysis01()
     Dim oldScreen As Boolean, oldEvents As Boolean, oldAlerts As Boolean, oldStatus As Variant
     Dim stateSaved As Boolean, Failed As Boolean, savedOK As Boolean
     Dim errText As String, msg As String, s As Long, sheetsMade As Long
-    Dim lv As Long, outList As String, filesMade As Long, outFolder As String
+    Dim lv As Long, outList As String, filesMade As Long, outDir As String
 
     On Error GoTo Failed
     oldScreen = Application.ScreenUpdating
@@ -153,8 +152,13 @@ Public Sub Run_ExamenAnalysis01()
             savedOK = False
             BuildOutputWorkbook dictSummary, lv
 
-            If outFolder = "" Then outFolder = EnsureWorkFolder()
-            outputPath = NewOutputPath(outFolder, Ar("out_name" & CStr(lv)))
+            If Len(outDir) = 0 Then
+                outDir = baseFolder & Application.PathSeparator & OutputFolderName()
+                If Not EnsureFolder(outDir) Then
+                    Err.Raise vbObjectError + 905, "modExamenAnalysis01", Ar("no_out_folder") & vbLf & outDir
+                End If
+            End If
+            outputPath = NewOutputPath(outDir, Ar("out_name" & CStr(lv)))
             g_wbOut.CheckCompatibility = False
             g_wbOut.SaveAs fileName:=outputPath, FileFormat:=xlOpenXMLWorkbook, CreateBackup:=False
             savedOK = True
@@ -181,6 +185,7 @@ Finished:
     On Error GoTo 0
 
     If Failed Then
+        If Len(outList) > 0 Then errText = errText & vbLf & vbLf & Ar("saved_before") & outList
         MsgBox Ar("failed") & vbLf & errText, vbCritical + vbMsgBoxRight + vbMsgBoxRtlReading, Ar("app_title2")
     Else
         msg = Ar("done") & outList & vbLf & vbLf & Ar("sheets") & " : " & sheetsMade
@@ -1518,77 +1523,104 @@ Private Sub PutRate(ByVal g As Worksheet, ByVal r As Long, ByVal c As Long, ByVa
 End Sub
 
 ' ---------------------------------------------------------------------------
-' Per-row highlight for the five-season table (live: reacts to manual entry).
-' Each row is compared on its own across columns c1..c2:
-'   - highest value  -> green, lowest value -> red (palette of modCompare)
-'   - a tie of exactly two cells colors both cells
-'   - a tie of three or more cells colors nothing on that side
-'   - a row with fewer than two numbers, or with all values equal, stays plain
+'  Third year only: last five seasons (past seasons typed by hand; the last
+'  column is filled from this file).  Returns the row of the total line.
 ' ---------------------------------------------------------------------------
-Private Function RateRuleFormula(ByVal firstRef As String, ByVal rowRef As String, ByVal fn As String) As String
-    Dim ext As String
-    ext = fn & "(" & rowRef & ")"
-    RateRuleFormula = "=AND(ISNUMBER(" & firstRef & "),COUNT(" & rowRef & ")>=2," & _
-        "MAX(" & rowRef & ")-MIN(" & rowRef & ")>0.0000005," & _
-        "ABS(" & firstRef & "-" & ext & ")<0.0000005," & _
-        "COUNTIFS(" & rowRef & ","">=""&(" & ext & "-0.0000005)," & _
-        rowRef & ",""<=""&(" & ext & "+0.0000005))<=2)"
+Private Function SeasonsSection(ByVal g As Worksheet, ByRef ord() As Long, ByVal nb As Long, _
+                                ByVal r0 As Long, ByVal titleKey As String, _
+                                ByVal tPass As Long, ByVal tPres As Long) As Long
+    Dim hd As Long, fr As Long, lr As Long, tt As Long
+    Dim k As Long, s As Long, r As Long, j As Long, y As Long, yearStart As Long
+
+    hd = r0 + 1: fr = r0 + 2: lr = fr + nb - 1: tt = lr + 1
+    If Month(Date) >= SEASON_START_MONTH Then yearStart = Year(Date) Else yearStart = Year(Date) - 1
+    SectionTitle g, r0, 6, Ar(titleKey)
+    g.Cells(hd, 1).Value2 = Ar("h_branch")
+    For j = 0 To 4
+        y = yearStart - 4 + j
+        g.Cells(hd, 2 + j).NumberFormat = "@"
+        g.Cells(hd, 2 + j).Value2 = CStr(y) & "-" & CStr(y + 1)
+    Next j
+    StyleHead g.Range(g.Cells(hd, 1), g.Cells(hd, 6))
+    g.Rows(hd).RowHeight = GEN_HEAD_HEIGHT
+    StyleBlock g, fr, tt, 6
+    For k = 0 To nb - 1
+        s = ord(k)
+        r = fr + k
+        g.Cells(r, 1).Value2 = GenBranch(s)
+        PutRate g, r, 6, mPass(s), mPres(s)
+    Next k
+    g.Cells(tt, 1).Value2 = Ar("total")
+    PutRate g, tt, 6, tPass, tPres
+    StyleTotalRow g, tt, 6
+    g.Range(g.Cells(fr, 2), g.Cells(tt, 6)).NumberFormat = FMT_PCT
+    SeasonsSection = tt
 End Function
 
-Private Function LocalFormulaText(ByVal g As Worksheet, ByVal f As String) As String
-    Dim t As Range
-    On Error GoTo Bail
-    Set t = g.Cells(g.Rows.Count, 1)
-    t.Formula = f
-    LocalFormulaText = t.FormulaLocal
-    t.Clear
-    Exit Function
-Bail:
-    LocalFormulaText = f
-End Function
-
-Private Function AddRateRule(ByVal g As Worksheet, ByVal rng As Range, ByVal f As String, ByVal fillColor As Long) As Boolean
+' ---------------------------------------------------------------------------
+' Conditional formatting for Gen (same look as modCompare: green = better,
+' red = worse, white bold text).
+' Locale-proof on purpose: every rule uses only operators and ABSOLUTE cell
+' addresses (no function names, no list separators, no dependence on the
+' active cell), so it works in any Excel language / regional setting.
+' ---------------------------------------------------------------------------
+Private Sub AddCF(ByVal rng As Range, ByVal formula As String, ByVal fillColor As Long, ByRef failed As Boolean)
     Dim fc As Object
     On Error Resume Next
-    Set fc = rng.FormatConditions.Add(Type:=xlExpression, Formula1:=f)
-    If fc Is Nothing Then
+    Set fc = rng.FormatConditions.Add(Type:=xlExpression, Formula1:=formula)
+    If Err.Number <> 0 Or fc Is Nothing Then
+        failed = True
         Err.Clear
-        Set fc = rng.FormatConditions.Add(Type:=xlExpression, Formula1:=LocalFormulaText(g, f))
-    End If
-    If Not fc Is Nothing Then
+    Else
         fc.Interior.Color = fillColor
         fc.Font.Color = RGB(255, 255, 255)
         fc.Font.Bold = True
         fc.StopIfTrue = False
-        AddRateRule = True
+        If Err.Number <> 0 Then
+            failed = True
+            Err.Clear
+        End If
     End If
-    Err.Clear
-End Function
-
-Private Sub ApplyRowRateHighlights(ByVal g As Worksheet, ByVal r1 As Long, ByVal r2 As Long, _
-                                   ByVal c1 As Long, ByVal c2 As Long)
-    Dim rng As Range, firstRef As String, rowRef As String, ok As Boolean
-
-    Set rng = g.Range(g.Cells(r1, c1), g.Cells(r2, c2))
-    firstRef = g.Cells(r1, c1).Address(False, False)
-    rowRef = g.Range(g.Cells(r1, c1), g.Cells(r1, c2)).Address(False, True)
-
-    ' Relative references in a conditional-format formula are resolved against
-    ' the active cell, so the top-left cell of the range must be active.
-    On Error Resume Next
-    g.Activate
-    g.Cells(r1, c1).Select
     On Error GoTo 0
+End Sub
 
-    rng.FormatConditions.Delete
-    ok = AddRateRule(g, rng, RateRuleFormula(firstRef, rowRef, "MAX"), RGB(39, 139, 82))
-    If ok Then ok = AddRateRule(g, rng, RateRuleFormula(firstRef, rowRef, "MIN"), RGB(190, 55, 55))
-    If Not ok Then mLayoutNotes = mLayoutNotes & vbLf & "Gen: row highlight rules could not be created."
+' Past-seasons table: each row is compared on its own.
+'   highest value  -> green, lowest value -> red
+'   two cells tied at the highest (or lowest) -> both coloured
+'   three or more tied, all values equal, or fewer than two values -> nothing
+' Two helper cells per row (hMax, hMin) hold the value to highlight, or "n" when
+' nothing must be highlighted; they are real formulas, so they follow manual input.
+' The helper columns are hidden.
+Private Sub AddRowExtremesFormat(ByVal g As Worksheet, ByVal r1 As Long, ByVal r2 As Long, _
+                                 ByVal c1 As Long, ByVal c2 As Long, _
+                                 ByVal hMax As Long, ByVal hMin As Long)
+    Dim r As Long, c As Long, a As String, rowRng As String
+    Dim mx As String, mn As String, ha As String, hb As String, failed As Boolean
+
+    g.Range(g.Cells(r1, c1), g.Cells(r2, c2)).FormatConditions.Delete
+    For r = r1 To r2
+        rowRng = g.Range(g.Cells(r, c1), g.Cells(r, c2)).Address(True, True)
+        mx = "MAX(" & rowRng & ")"
+        mn = "MIN(" & rowRng & ")"
+        g.Cells(r, hMax).Formula = "=IF(AND(COUNT(" & rowRng & ")>=2," & mx & "<>" & mn & _
+                                   ",COUNTIF(" & rowRng & "," & mx & ")<=2)," & mx & ",""n"")"
+        g.Cells(r, hMin).Formula = "=IF(AND(COUNT(" & rowRng & ")>=2," & mx & "<>" & mn & _
+                                   ",COUNTIF(" & rowRng & "," & mn & ")<=2)," & mn & ",""n"")"
+        ha = g.Cells(r, hMax).Address(True, True)
+        hb = g.Cells(r, hMin).Address(True, True)
+        For c = c1 To c2
+            a = g.Cells(r, c).Address(True, True)
+            AddCF g.Cells(r, c), "=(" & a & "<>"""")*(" & a & "=" & ha & ")", RGB(39, 139, 82), failed
+            AddCF g.Cells(r, c), "=(" & a & "<>"""")*(" & a & "=" & hb & ")", RGB(190, 55, 55), failed
+        Next c
+    Next r
+    g.Range(g.Columns(hMax), g.Columns(hMin)).Hidden = True
+    If failed Then mLayoutNotes = mLayoutNotes & vbLf & "Gen section 4: conditional formatting could not be applied."
 End Sub
 
 Private Sub BuildGen(ByVal g As Worksheet, ByVal level As Long)
     Dim ord() As Long, nb As Long, base As Variant
-    Dim tit(1 To 2) As Long, hd(1 To 2) As Long, fr(1 To 2) As Long, lr(1 To 2) As Long, tt(1 To 2) As Long
+    Dim tit(1 To 4) As Long, hd(1 To 4) As Long, fr(1 To 4) As Long, lr(1 To 4) As Long, tt(1 To 4) As Long
     Dim k As Long, s As Long, r As Long
     Dim tReg As Long, tPres As Long, tPass As Long
 
@@ -1662,7 +1694,13 @@ Private Sub BuildGen(ByVal g As Worksheet, ByVal level As Long)
     g.Range(g.Cells(fr(2), 2), g.Cells(tt(2), 3)).NumberFormat = FMT_COUNT
     g.Range(g.Cells(fr(2), 4), g.Cells(tt(2), 4)).NumberFormat = FMT_PCT
 
-    ' (no comparison with past seasons and no comparison between terms: removed on purpose)
+    ' first and second year: sections 1-2 only (comparisons removed on purpose)
+    If level = 3 Then
+        ' ---------- 3 : last five seasons (first semester) ----------
+        tt(3) = SeasonsSection(g, ord, nb, tt(2) + 2, "g3", tPass, tPres)
+        ' highest = green / lowest = red per row (manual past seasons); helpers in hidden H:I
+        AddRowExtremesFormat g, tt(2) + 4, tt(3), 2, 6, 8, 9
+    End If
 
     On Error Resume Next
     g.Activate
@@ -1852,28 +1890,22 @@ Private Function PathInUse(ByVal fullPath As String) As Boolean
 End Function
 
 ' first file: <stem>.xlsx   then <stem>_01.xlsx, <stem>_02.xlsx ...
-Private Function WorkFolderName() As String
-    Dim parts() As String, i As Long, t As String
-    parts = Split(WORK_FOLDER_CODES, " ")
-    For i = 0 To UBound(parts)
-        t = t & ChrW(CLng("&H" & parts(i)))
-    Next i
-    WorkFolderName = t
+'==============================================================================
+'  Output folder (created next to the tool workbook when missing)
+'==============================================================================
+Private Function OutputFolderName() As String
+    OutputFolderName = ArHex("645 639 627 644 62C 629 20 628 64A 627 646 627 62A 20 627 644 641 635 644 20 30 31")
 End Function
 
-' Finds the work folder next to the tool by NAME, creates it when missing.
-' Returns its path WITHOUT a trailing separator. FileSystemObject is Unicode-safe.
-Private Function EnsureWorkFolder() As String
-    Dim fso As Object, p As String
-    Set fso = CreateObject("Scripting.FileSystemObject")
-    p = ThisWorkbook.Path & Application.PathSeparator & WorkFolderName()
-    If Not fso.FolderExists(p) Then
+Private Function EnsureFolder(ByVal p As String) As Boolean
+    If Right$(p, 1) = Application.PathSeparator Then p = Left$(p, Len(p) - 1)
+    If Not FolderExists(p) Then
         On Error Resume Next
-        fso.CreateFolder p
+        MkDir p
+        Err.Clear
         On Error GoTo 0
-        If Not fso.FolderExists(p) Then Err.Raise vbObjectError + 905, "modExamenAnalysis01", Ar("no_wfolder") & vbLf & p
     End If
-    EnsureWorkFolder = p
+    EnsureFolder = FolderExists(p)
 End Function
 
 Private Function NewOutputPath(ByVal folder As String, ByVal stem As String) As String
@@ -1899,15 +1931,14 @@ End Function
 
 Private Function Ar(ByVal key As String) As String
     Select Case key
-        Case "no_wfolder": Ar = ArHex("62A 639 630 651 631 20 625 646 634 627 621 20 645 62C 644 62F 20 627 644 639 645 644 3A")
         Case "lv1": Ar = ArHex("623 648 644 649")
         Case "lv2": Ar = ArHex("62B 627 646 64A 629")
         Case "lv3": Ar = ArHex("62B 627 644 62B 629")
         Case "title_base": Ar = ArHex("62A 62D 644 64A 644 20 646 62A 627 626 62C 20 627 62E 62A 628 627 631 627 62A 20 627 644 641 635 644 20 627 644 623 648 644 20 2D 20 642 633 645")
         Case "gen_level": Ar = ArHex("645 633 62A 648 649")
-        Case "out_name1": Ar = ArHex("62A 62D 644 64A 644 20 646 62A 627 626 62C 20 627 62E 62A 628 627 631 627 62A 20 645 633 62A 648 649 20 623 648 644 649 20 62B 627 646 648 64A")
-        Case "out_name2": Ar = ArHex("62A 62D 644 64A 644 20 646 62A 627 626 62C 20 627 62E 62A 628 627 631 627 62A 20 645 633 62A 648 649 20 62B 627 646 64A 629 20 62B 627 646 648 64A")
-        Case "out_name3": Ar = ArHex("62A 62D 644 64A 644 20 646 62A 627 626 62C 20 627 62E 62A 628 627 631 627 62A 20 645 633 62A 648 649 20 62B 627 644 62B 629 20 62B 627 646 648 64A")
+        Case "out_name1": Ar = ArHex("62A 62D 644 64A 644 20 646 62A 627 626 62C 20 627 62E 62A 628 627 631 627 62A 20 627 644 641 635 644 20 30 31 20 644 645 633 62A 648 649 20 623 648 644 649 20 62B 627 646 648 64A")
+        Case "out_name2": Ar = ArHex("62A 62D 644 64A 644 20 646 62A 627 626 62C 20 627 62E 62A 628 627 631 627 62A 20 627 644 641 635 644 20 30 31 20 644 645 633 62A 648 649 20 62B 627 646 64A 629 20 62B 627 646 648 64A")
+        Case "out_name3": Ar = ArHex("62A 62D 644 64A 644 20 646 62A 627 626 62C 20 627 62E 62A 628 627 631 627 62A 20 627 644 641 635 644 20 30 31 20 644 645 633 62A 648 649 20 62B 627 644 62B 629 20 62B 627 646 648 64A")
         Case "no_valid": Ar = ArHex("644 645 20 64A 64F 639 62B 631 20 639 644 649 20 628 64A 627 646 627 62A 20 635 627 644 62D 629 20 644 623 64A 20 645 633 62A 648 649 60C 20 641 644 645 20 64A 64F 646 634 623 20 623 64A 20 645 644 641 2E")
         Case "k_first": Ar = ArHex("627 648 644 64A")
         Case "k_second": Ar = ArHex("62B 627 646 64A 647")
@@ -1993,9 +2024,10 @@ Private Function Ar(ByVal key As String) As String
         Case "sj13": Ar = ArHex("627 644 642 627 646 648 646")
         Case "sj14": Ar = ArHex("62A 20 628 62F 646 64A 629 20 648 631 64A 627 636 64A 629")
         Case "app_title2": Ar = ArHex("62A 62D 644 64A 644 20 646 62A 627 626 62C 20 627 644 627 62E 62A 628 627 631 627 62A")
-        Case "out_name": Ar = ArHex("62A 62D 644 64A 644 20 646 62A 627 626 62C 20 627 644 627 62E 62A 628 627 631 627 62A 20 30 31")
         Case "save_tool": Ar = ArHex("627 62D 641 638 20 645 644 641 20 627 644 623 62F 627 629 20 623 648 644 627 64B 20 641 64A 20 645 62C 644 62F 60C 20 62B 645 20 636 639 20 645 62C 644 62F 20 627 644 645 635 62F 631 20 628 62C 627 646 628 647 2E")
         Case "no_folder": Ar = ArHex("644 645 20 623 62C 62F 20 645 62C 644 62F 20 627 644 645 635 62F 631 20 628 62C 627 646 628 20 645 644 641 20 627 644 623 62F 627 629 3A")
+        Case "no_out_folder": Ar = ArHex("62A 639 630 631 20 625 646 634 627 621 20 645 62C 644 62F 20 627 644 645 62E 631 62C 627 62A 3A")
+        Case "saved_before": Ar = ArHex("627 644 645 644 641 627 62A 20 627 644 62A 64A 20 62D 641 638 62A 20 642 628 644 20 627 644 62E 637 623 3A")
         Case "no_files": Ar = ArHex("644 627 20 62A 648 62C 62F 20 645 644 641 627 62A 20 78 6C 73 78 20 641 64A 20 645 62C 644 62F 20 627 644 645 635 62F 631 3A")
         Case "see_sheet": Ar = ArHex("627 644 62A 641 627 635 64A 644 20 627 644 643 627 645 644 629 20 641 64A 20 648 631 642 629 20 AB 646 642 644 20 627 644 628 64A 627 646 627 62A BB 2E")
         Case "ok_all": Ar = ArHex("639 648 644 62C 62A 20 643 644 20 627 644 645 644 641 627 62A 20 628 646 62C 627 62D 20 62F 648 646 20 62A 639 627 631 636 627 62A 2E")
@@ -2066,7 +2098,6 @@ Private Function Ar(ByVal key As String) As String
         Case "gb4": Ar = ArHex("33 20 639 644 648 645 20 62A 62C 20 30 32")
         Case "gb5": Ar = ArHex("33 20 631 64A 627 636 64A 627 62A")
         Case "gb6": Ar = ArHex("33 20 62A 633 64A 64A 631 20 648 627 642 62A 635 627 62F")
-        Case "title_main2": Ar = ArHex("62A 62D 644 64A 644 20 646 62A 627 626 62C 20 627 62E 62A 628 627 631 627 62A 20 627 644 641 635 644 20 627 644 623 648 644 20 2D 20 642 633 645 20 62B 627 644 62B 629")
         Case "s_exempt": Ar = ArHex("627 644 645 639 641 64A 648 646")
         Case "cls01": Ar = ArHex("627 644 641 626 629 20 30 31")
         Case "cls02": Ar = ArHex("627 644 641 626 629 20 30 32")
