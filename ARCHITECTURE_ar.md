@@ -37,13 +37,13 @@
 
 ## 2. وحدات النشر
 
-تُستورد ملفات `.bas` في **مصنَّف أداة** (يوصى بمصنَّف واحد للجميع؛ ويمكن أن تعيش وحدات بناء التحليل وحدها في مصنَّف منفصل بورقة `Term01Panel` الخاصة بها). وتربط `modBuildPanel.PanelActions` أزرار `ControlPanel` بماكروهات المجموعتين:
+تُستورد ملفات `.bas` في **مصنَّف أداة** (يوصى بمصنَّف واحد للجميع؛ ويمكن أن تعيش وحدات بناء التحليل وحدها في مصنَّف منفصل بورقة `Term01Panel` الخاصة بها). وتربط `modBuildPanel01.PanelActions` أزرار `ControlPanel` بماكروهات المجموعتين:
 
 ```mermaid
 flowchart LR
-  subgraph T1["ControlPanel (modBuildPanel)"]
-    BP[modBuildPanel]
-    CO[modCollector]
+  subgraph T1["ControlPanel (modBuildPanel01)"]
+    BP[modBuildPanel01]
+    CO[modCollector01]
     EX[modExamenAnalysis01]
     TR[modTransfer01]
     SP[modStreamPreferences01]
@@ -51,20 +51,19 @@ flowchart LR
     OX[modOrientationResults01]
   end
   subgraph T2["بناء التحليل (الزر: Term 01 Analysis)"]
-    BA[BuildAll]
-    DA[Data01]
-    AN[Analysis01]
-    CP[Compare01]
-    CT[CartTec01]
-    CM[Common01]
-    PN[Panel01]
+    BA[modAnalysisBuilderBuildAll01]
+    DA[modAnalysisBuilderData01]
+    AN[modAnalysisBuilderAnalysis01]
+    CP[modAnalysisBuilderCompare01]
+    CT[modAnalysisBuilderCartTec01]
+    CM[modAnalysisBuilderCommon01]
   end
   BP -->|Application.Run| BA
 ```
 
-الوحدات `Transfer` و`Analysis01` و`Compare01` **مستقلة**: تقرأ كل منها ملفات `Source01` الخام بنفسها (نسخة مضمّنة من محرك `Collector01`) وتكتب في مجلد العمل. وتستعمل `Analysis01` و`Compare01` وحدة `Common01` المشتركة (الثوابت والأنماط و`DiscoverData`)، وهي مكتبة وليست خطوة في مسار العمل. ولم تعد `Compare01` تستدعي `Analysis01`: فهي تحمل نسختين خاصتين من `PutModeFormula` و`ApplyPassColors`.
+الوحدات `Transfer` و`Analysis01` و`Compare01` **مستقلة**: تقرأ كل منها ملفات `Source01` الخام بنفسها (نسخة مضمّنة من محرك قراءة المصدر في `modAnalysisBuilderData01`) وتكتب في مجلد العمل. وتستعمل `Analysis01` و`Compare01` وحدة `modAnalysisBuilderCommon01` المشتركة (الثوابت والأنماط و`DiscoverData`)، وهي مكتبة وليست خطوة في مسار العمل. ولم تعد `Compare01` تستدعي `Analysis01`: فهي تحمل نسختين خاصتين من `PutModeFormula` و`ApplyPassColors`.
 
-`modBuildPanel` هي الوحدة الوحيدة التي تعرف الوحدات الأخرى. تستدعيها عبر `Application.Run` بأسماء مؤهَّلة (`modTransfer01.Run_Transfer01` و`modBiuldAnalysisfilesBuildAll01.Build_All`) حيث يجب أن يطابق `VB_Name` تمامًا، وبالاسم غير المؤهَّل `CollectTerm01Results`. وعندما لا توجد ورقة `Term01Panel` تعود إجراءات `Panel01` التي تستدعيها `Build_All` بصمت.
+`modBuildPanel01` هي الوحدة التي تعرف بقية الوحدات. تستدعيها عبر `Application.Run` بأسماء مؤهَّلة (`modTransfer01.Run_Transfer01` و`modAnalysisBuilderBuildAll01.Build_All`) حيث يجب أن يطابق `VB_Name` تمامًا، وبالاسم غير المؤهَّل `CollectTerm01Results`. وعندما لا توجد ورقة `Term01Panel` تعود إجراءات التقدّم في الوحدة نفسها (`Panel_Update` و`Panel_Show` وغيرهما) بصمت.
 
 كل وحدة تكتب ملفًا تبحث عن **مجلد العمل** بالاسم بجوار الأداة وتنشئه إن غاب: أول وحدة تعمل تُنشئه. أما الوحدات التي تقرأ منه فقط فلا تُنشئه أبدًا.
 
@@ -85,22 +84,22 @@ flowchart TD
 
 تقرأ `CollectTerm01Results` و`Build_All` ملفات `Source01` الخام كلتاهما؛ ولا تقرأ `Build_All` الملف `Term01Results.xlsx`.
 
-### 3.2 مسار التوجيه (مرتَّب ومحروس)
+### 3.2 مسار التوجيه (سلسلة واحدة)
 
 ```mermaid
 flowchart TD
   S1[("Source01")] --> T["1. Run_Transfer01"]
-  T --> G[("مجلد العمل: Term01Guidance.xlsx<br/>يُبنى من الصفر إن غاب<br/>Data (21 عمودًا) / Data01 (15 عمودًا)")]
-  W[("StreamPreferences01.xlsx<br/>الورقتان Tecno / Litr")] --> P["2. Run_StreamPreferences01"]
+  T --> G[("مصنَّف التوجيه في الذاكرة<br/>Data (21 عمودًا) / Data01 (15 عمودًا)<br/>لا يُقرأ ملف سابق ولا يُستبدل")]
+  W[("ملف الرغبات داخل Source01<br/>Tecno / Litr — يُكتشف ببنيته لا باسمه")] --> P["2. Run_StreamPreferences01"]
   P --> G
   G --> O["3. Run_Orientation01"]
-  O --> G
+  O --> G2[("مجلد العمل:<br/>محضر التوجيه التدريجي للفصل 01[_NN].xlsx")]
   O --> RP["ورقة التقرير العام الحيّة"]
-  G --> E["4. Run_OrientationResults01"]
-  E --> OUT[("مجلد العمل: OrientationResults01.xlsx<br/>Litr وTecno1..n")]
+  G2 --> E["4. Run_OrientationResults01"]
+  E --> OUT[("مجلد العمل:<br/>نتائج التوجيه التدريجي للفصل 01[_NN].xlsx<br/>Litr وTecno1..n")]
 ```
 
-لا تُفعَّل الخطوة N إلا إذا كانت مرحلة سير العمل ≥ N-1 (القسم 7.3).
+الخطوات الأربع ينفّذها زر `First Term Orientation` واحد عبر `modOrientationAll01.Run_OrientationAll01`. ورقة `Term01Panel` تعرض التقدّم فقط؛ ولا يوجد حارس يفرض الترتيب أو يمنع تشغيل أي خطوة منفردة من محرر VBA (انظر 7.3).
 
 ### 3.3 مسار بناة التحليل
 
@@ -132,9 +131,9 @@ flowchart TD
 
 | المستوى | الأقسام (أسماء الأوراق) | اسم الملف الناتج (تُضاف لاحقة رقمية إن وُجد) |
 |---|---|---|
-| أولى ثانوي (جذع مشترك) | `Lit` و`ST01` و`ST02` و`ST03` و`ST04` | `تحليل نتائج اختبارات مستوى أولى ثانوي` |
-| ثانية ثانوي | `Philo` و`LEtr` و`SE01` و`SE02` و`Math` و`GEc` | `تحليل نتائج اختبارات مستوى ثانية ثانوي` |
-| ثالثة ثانوي | `Philo` و`LEtr` و`SE01` و`SE02` و`Math` و`GEc` | `تحليل نتائج اختبارات مستوى ثالثة ثانوي` |
+| أولى ثانوي (جذع مشترك) | `Lit` و`ST01` و`ST02` و`ST03` و`ST04` | `تحليل نتائج اختبارات الفصل 01 لمستوى أولى ثانوي` |
+| ثانية ثانوي | `Philo` و`LEtr` و`SE01` و`SE02` و`Math` و`GEc` | `تحليل نتائج اختبارات الفصل 01 لمستوى ثانية ثانوي` |
+| ثالثة ثانوي | `Philo` و`LEtr` و`SE01` و`SE02` و`Math` و`GEc` | `تحليل نتائج اختبارات الفصل 01 لمستوى ثالثة ثانوي` |
 
 يضم كل ملف ورقة `Gen` الخاصة بمستواه (المسجلون والحاضرون والغائبون والنتائج العامة لكل قسم؛ و**لا** توجد مقارنة مع المواسم الماضية ولا بين الفصول)، وورقة لكل قسم فيه بيانات، وورقة ملخّص النقل (مدخلات ذلك المستوى فقط؛ وتظهر ملاحظات المعالجة في كل ملف). والقسم الذي لا بيانات له لا تُنشأ له ورقة ولا سطر في `Gen`؛ والمستوى الذي لا بيانات له لا يُنتَج له ملف.
 
@@ -154,9 +153,9 @@ flowchart TD
 | التحقق من العناوين | يطابق `Transfer` كل عنوان معيَّن بكلمات عربية متوقعة قبل قراءة البيانات |
 | رقم القسم | يُؤخذ من عدد صحيح موجب بعد بادئة المسار في نص `H1` المطبَّع (`Transfer`)؛ وتطابق بناة التحليل نص `H1` كاملًا |
 
-### 4.2 `Term01Guidance.xlsx`
+### 4.2 `محضر التوجيه التدريجي للفصل 01[_NN].xlsx`
 
-**الموقع.** الملف في **مجلد العمل** («معالجة بيانات الفصل 01» بجوار الأداة). يجد `Run_Transfer01` المجلد أو يُنشئه، وإن لم يجد الملف فيه **بنى مصنَّفًا جديدًا تمامًا من الصفر** (ورقة `Data` بصف عنوان وإحدى وعشرين خانة عناوين والجدول `Data` المثبَّت عند `A2`؛ وورقة `Data01` فقط عند وجود بيانات آداب؛ وتُحذف الورقة الافتراضية الفارغة) وحفظه هناك **بعد نجاح التشغيل كله فقط**؛ فالتشغيل الفاشل لا يترك شيئًا خلفه. والملف الموجود في مجلد العمل يُعاد استعماله. وتحلّ `StreamPreferences` و`Orientation` و`OrientationResults` وبصمات الملفات في اللوحة مسار الملف في مجلد العمل ولا تُنشئه أبدًا (`File not found ... Run Data Transfer first`). ويبقى `StreamPreferences01.xlsx` بجوار الأداة.
+**الموقع.** الملف في **مجلد العمل** («معالجة بيانات الفصل 01» بجوار الأداة). يجد `Run_Transfer01` المجلد أو يُنشئه، ويبني **مصنَّفًا جديدًا تمامًا من الصفر في الذاكرة** (ورقة `Data` بصف عنوان وإحدى وعشرين خانة عناوين والجدول `Data` المثبَّت عند `A2`؛ وورقة `Data01` دائمًا، ولو لم توجد بيانات آداب؛ وتُحذف الورقة الافتراضية الفارغة). لا يقرأ ملف توجيه سابقًا ولا يعيد استعماله. ويُحفظ المصنف باسم `محضر التوجيه التدريجي للفصل 01.xlsx` ثم `_01` و`_02`… عند وجود الاسم، ولا يُستبدل ملف موجود أبدًا: عند استدعاء `Run_Transfer01` مباشرة يُحفظ في نهاية التشغيل الناجح، وفي السلسلة الكاملة يُحفظ بعد نجاح خطوة التوجيه. وتعمل `StreamPreferences` على المصنف في الذاكرة، بينما تقرأ `Orientation` و`OrientationResults` المحضر المحفوظ في مجلد العمل. وملف الرغبات ليس له اسم ثابت: يُكتشف داخل `Source01` ببنيته (انظر 4.3).
 
 **ورقة العلوم `Data`**، الجدول `Data`، مثبَّت عند `A2`، 21 عمودًا:
 
@@ -194,7 +193,9 @@ flowchart TD
 
 الأوراق محميّة بكلمة مرور فارغة. وكل الخلايا مقفلة عدا عمودي الرغبتين؛ وتفتح `modOrientation01` عمود القرار إضافةً.
 
-### 4.3 `StreamPreferences01.xlsx`
+### 4.3 ملف الرغبات (داخل `Source01`)
+
+لا يُبحث عن ملف الرغبات باسم ثابت، بل يُكتشف داخل `Source01` **ببنيته**: مصنَّف `.xls*` فيه ورقة `Tecno` و/أو ورقة `Litr` بالعناوين في الصف 2. والرسالة الفعلية عند غيابه: `No wishes file was found in 'Source01'...`.
 
 | الورقة | الهدف | التخطيط |
 |---|---|---|
@@ -213,15 +214,15 @@ flowchart TD
 
 | الملف | يكتبه | ملاحظات |
 |---|---|---|
-| `Term01Results.xlsx` | `modCollector` (`First Term Results`) | يُستبدل دون سؤال؛ وتُحذف الورقة الافتراضية الفارغة أيًّا كانت لغة Excel |
-| `Term01Guidance.xlsx` | تنشئه `modTransfer01`؛ وتحدّثه `StreamPreferences` و`Orientation` | يُبنى من الصفر عند غيابه |
-| `OrientationResults01.xlsx` | `modOrientationResults01` | يسأل قبل الاستبدال |
+| `Term01Results.xlsx` | `modCollector01` (`First Term Results`) | يُستبدل دون سؤال؛ وتُحذف الورقة الافتراضية الفارغة أيًّا كانت لغة Excel |
+| `محضر التوجيه التدريجي للفصل 01[_NN].xlsx` | تنشئه `modTransfer01` في الذاكرة، ويُحفظ بعد خطوة التوجيه | يُبنى دائمًا من الصفر، ولا يُستبدل ملف موجود (`_01` و`_02`…) |
+| `نتائج التوجيه التدريجي للفصل 01[_NN].xlsx` | `modOrientationResults01` | يُختار أول اسم غير مستعمل؛ لا سؤال استبدال ولا رسالة «الملف مفتوح» |
 | `<تحليل الاختبارات لكل مستوى>.xlsx` | `modExamenAnalysis01` | يُختار اسم غير مستعمل (`_01` و`_02`) |
 | `<stem>.xlsx` و`BuildLog_*.txt` | `Build_All` | يُختار اسم غير مستعمل (`NextFreePath`) |
 | `<stem>_Analysis.xlsx` و`AnalysisLog_*.txt` | `Run_Analysis01` | كذلك |
 | `<stem>_Compare.xlsx` و`CompareLog_*.txt` | `Run_Compare01` | كذلك |
 
-تبقى المدخلات بجوار الأداة: `Source01\` و`ExamenSource01\` و`StreamPreferences01.xlsx`.
+تبقى المدخلات بجوار الأداة: `Source01\` و`ExamenSource01\` (وملف الرغبات داخل `Source01`).
 
 ### 4.5 مصنَّف مخرجات بناة التحليل
 
@@ -232,9 +233,9 @@ flowchart TD
 | `AnalyseCompare` | مقارنة بين الأقسام (للملفات متعددة الأقسام فقط) |
 | `Cart_Tec` | البطاقة التقنية للتلميذ (السنة السابقة / الاختبار أو الفرق / الفصل الأول) |
 
-### 4.6 `OrientationResults01.xlsx`
+### 4.6 `نتائج التوجيه التدريجي للفصل 01[_NN].xlsx`
 
-الورقة `Litr` للآداب (بالترتيب الأصلي) وورقة لكل قسم علوم (`Tecno1` و`Tecno2` ...)، مرتَّبة بمعدل الفصل تنازليًا مع عمود ترتيب، ويُحذف عمود القسم. ويُفتح المصنَّف المصدر للقراءة فقط.
+الورقة `Litr` للآداب (بالترتيب الأصلي، بلا فرز وبلا عمود ترتيب) وورقة لكل قسم علوم (`Tecno1` و`Tecno2` ...)، وهذه مرتَّبة بمعدل الفصل تنازليًا مع عمود ترتيب، ويُحذف عمود القسم. ويُفتح المصنَّف المصدر للقراءة فقط.
 
 ---
 
@@ -375,13 +376,9 @@ On Error GoTo handler
 - احفظ فقط بعد نجاح كل خطوات ذلك الملف؛ وإلا فأغلقه بـ`SaveChanges:=False`.
 - افتح ملفات المصدر بـ`UpdateLinks:=False` و`ReadOnly:=True` و`AddToMRU:=False`، و`AutomationSecurity = msoAutomationSecurityForceDisable` حيث تُفتح ملفات `.xlsm`/`.xls`.
 
-### 7.3 حالة سير العمل (`modBuildPanel`)
+### 7.3 حالة سير العمل (`modBuildPanel01`)
 
-تُخزَّن المرحلة 0-4 في أسماء مخفية على مستوى المصنَّف (`_Term01_Stage` و`_Term01_Guidance` و`_Term01_Wishes` و`_Term01_Export`). وتحمل أسماء الملفات الثلاثة **بصمة** (`size|yyyymmddhhnnss`) تؤخذ بعد كل خطوة ناجحة.
-
-عند كل نقرة تعيد `TermWorkflowStage01` حساب المرحلة الفعلية: إن فُقد ملف مبصوم أو اختلفت بصمته تراجعت المرحلة (إلى 0 أو 1 أو 3 على التوالي). وقبل تشغيل الخطوة تُحفظ المرحلة على أنها `الخطوة - 1`، فأي محاولة ملغاة أو فاشلة تُبطل كل الإنجازات اللاحقة. ولا تُحفظ الحالة إلا عند حفظ مصنَّف الأداة.
-
-تحوي `WorkflowFile01` مسارًا اختياريًا لبصمة المحتوى الكاملة (`fullHash`) لا يُطلب حاليًا أبدًا.
+تحتفظ الوحدة بالمرحلة 0-4 في أسماء مخفية على مستوى المصنَّف (`_Term01_Stage` و`_Term01_Guidance` و`_Term01_Wishes` و`_Term01_Export`). لكن هذه الآلية **غير فعّالة في المسار الحالي**: `WorkflowStep01` تعرف أسماء أزرار قديمة (`btnDataTransfer` و`btnStreamPreferences` و`btnExportOrientationResults`) لا وجود لها في `PanelActions`، لذلك تعيد 0 لكل الأزرار الحقيقية. و`TermWorkflowStage01` تبحث عن ملفات بأسماء إنجليزية ثابتة (`Term01Guidance.xlsx` و`StreamPreferences01.xlsx` و`OrientationResults01.xlsx`) لا ينتجها المشروع. النتيجة أن المرحلة تبقى 0، وأن `RunTermStep01` و`WorkflowGuard01` غير قابلين للوصول من اللوحة، فالترتيب غير مفروض.
 
 ### 7.4 مجلد العمل والوصول الآمن لليونيكود
 
@@ -403,20 +400,20 @@ On Error GoTo handler
 
 | الوحدة | نقاط الدخول العامة | تقرأ | تكتب |
 |---|---|---|---|
-| `modBuildPanel` | `BuildControlPanel` و`RefreshPanelState` و`RunTermStep01` و`*Guard` | أسماء المصنَّف وبصمات الملفات | الورقة `ControlPanel` والأسماء المخفية |
-| `modCollector` | `CollectTerm01Results` و`ProcessSingleSourceFile` و`CollectAllSources` | `Source01\` | مجلد العمل: `Term01Results.xlsx`؛ و`Source01\_Original\` |
-| `modTransfer01` | `Run_Transfer01` و`Transfer01Succeeded` | `Source01\` | مجلد العمل: `Term01Guidance.xlsx` (يُبنى من الصفر عند غيابه؛ `Data` و`Data01`) |
-| `modStreamPreferences01` | `Run_StreamPreferences01` و`Preferences01Succeeded` | `StreamPreferences01.xlsx` | أعمدة الرغبات في `Term01Guidance.xlsx` |
-| `modOrientation01` | `Run_Orientation01` و`RefreshReports01` و`Orientation01Succeeded` | `Term01Guidance.xlsx` من مجلد العمل | عمود القرار وأوراق الملخّص والتقرير العام |
-| `modOrientationResults01` | `Run_OrientationResults01` و`OrientationResults01Succeeded` | `Term01Guidance.xlsx` من مجلد العمل (للقراءة فقط) | مجلد العمل: `OrientationResults01.xlsx` |
+| `modBuildPanel01` | `BuildControlPanel` و`RefreshPanelState` و`RunTermAll01` و`RunTermStep01` و`Panel_Create` و`Panel_Update` و`Panel_OpenOutput` | أسماء المصنَّف وبصمات الملفات | الورقة `ControlPanel` والورقة `Term01Panel` والأسماء المخفية |
+| `modCollector01` | `CollectTerm01Results` و`ProcessSingleSourceFile` و`CollectAllSources` | `Source01\` | مجلد العمل: `Term01Results.xlsx`؛ و`Source01\_Original\` |
+| `modTransfer01` | `Run_Transfer01` و`Transfer01Succeeded` و`GuidanceWorkbook` و`SaveGuidanceCopy` | `Source01\` | مصنف التوجيه في الذاكرة (`Data` و`Data01`)، ثم `محضر التوجيه التدريجي للفصل 01[_NN].xlsx` |
+| `modStreamPreferences01` | `Run_StreamPreferences01` و`Preferences01Succeeded` | ملف الرغبات المكتشف داخل `Source01` | أعمدة الرغبات في مصنف التوجيه |
+| `modOrientation01` | `Run_Orientation01` و`RefreshReports01` و`Orientation01Succeeded` | `محضر التوجيه التدريجي للفصل 01[_NN].xlsx` من مجلد العمل | عمود القرار وأوراق الملخّص والتقرير العام، ثم يحفظ المحضر |
+| `modOrientationAll01` | `Run_OrientationAll01` و`OrientationAll01Succeeded` | الوسائط الأربع أعلاه | لا يكتب بنفسه؛ ينسّق الخطوات الأربع |
+| `modOrientationResults01` | `Run_OrientationResults01` و`OrientationResults01Succeeded` | `محضر التوجيه التدريجي للفصل 01[_NN].xlsx` من مجلد العمل (للقراءة فقط) | مجلد العمل: `نتائج التوجيه التدريجي للفصل 01[_NN].xlsx` |
 | `modExamenAnalysis01` | `Run_ExamenAnalysis01` | `ExamenSource01\*.xlsx` | حتى ثلاثة مصنَّفات جديدة (واحد لكل مستوى) في مجلد العمل |
-| `...BuildAll01` | `Build_All` و`Build_One` | `Source01\` | مجلد العمل: `<stem>.xlsx` و`BuildLog_*.txt` |
-| `...Data01` | `LoadSource` و`GetFileMap` و`GroupReady` و`BuildDataSheet` | `Source01\` | ورقة `Data` |
-| `...Analysis01` | `BuildAnalysisSheets` و`CoreKeysFor` و**`Run_Analysis01`** | `Data` / `Source01\` (في الاستقلال) | `Analysis01`؛ وفي الاستقلال: `<stem>_Analysis.xlsx` و`AnalysisLog_*.txt` في مجلد العمل |
-| `...Compare01` | `BuildCompareSheet` و**`Run_Compare01`** | `Data` / `Source01\` (في الاستقلال) | `AnalyseCompare`؛ وفي الاستقلال: `<stem>_Compare.xlsx` و`CompareLog_*.txt` في مجلد العمل |
-| `...CartTec01` | `BuildCartTecSheet` | `Data` | `Cart_Tec` |
-| `...Common01` | الثوابت والأنماط و`DiscoverData` | المصنَّف | لا شيء |
-| `...Panel01` | `Panel_Create` و`Panel_Update` و`Panel_Reset` و`Panel_Finish` و`Panel_Show` و`Panel_OpenOutput` | | الورقة `Term01Panel` |
+| `modAnalysisBuilderBuildAll01` | `Build_All` و`Build_One` | `Source01\` | مجلد العمل: `<stem>.xlsx` و`BuildLog_*.txt` |
+| `modAnalysisBuilderData01` | `LoadSource` و`GetFileMap` و`GroupReady` و`BuildDataSheet` (كلها `Public`) | `Source01\` | ورقة `Data` |
+| `modAnalysisBuilderAnalysis01` | `BuildAnalysisSheets` و`CoreKeysFor` و**`Run_Analysis01`** | `Data` / `Source01\` (في الاستقلال) | `Analysis01`؛ وفي الاستقلال: `<stem>_Analysis.xlsx` و`AnalysisLog_*.txt` في مجلد العمل |
+| `modAnalysisBuilderCompare01` | `BuildCompareSheet` و**`Run_Compare01`** | `Data` / `Source01\` (في الاستقلال) | `AnalyseCompare`؛ وفي الاستقلال: `<stem>_Compare.xlsx` و`CompareLog_*.txt` في مجلد العمل |
+| `modAnalysisBuilderCartTec01` | `BuildCartTecSheet` | `Data` | `Cart_Tec` |
+| `modAnalysisBuilderCommon01` | الثوابت والأنماط و`DiscoverData` و`OutputFolderName` | المصنَّف | لا شيء |
 
 ---
 
@@ -428,9 +425,9 @@ On Error GoTo handler
 2. **اختلاف معنى `0`.** صيغ التحليل و`IsPresent` تعدّ `0` غيابًا. و`Transfer` و`Orientation` تعدّانه علامة صحيحة. وتحليل الاختبارات يُدخله في المعدل لكنه يستبعده من إحصاءات المادة.
 3. **(حُلَّ في 0.4.0)** أُزيلت وحدتا التوزيع والمسح (`modResultFlow01` و`modClearDataOnly01`) مع زرّيهما في اللوحة.
 4. **التوجيه كلّه أو لا شيء عند نقص بيانات واحد.** يوقف `Err.Raise` 56 التشغيلَ إذا لم تتوفر لناجح أي شعبة مؤهَّلة للمتبقين (عمليًا غياب ملمح التسيير). كما يُعاد ترتيب الجدول في ورقة المستخدم نفسها.
-5. **هشاشة حالة سير العمل.** الحالة في أسماء مخفية (تضيع إن لم يُحفظ مصنَّف الأداة). وتعديل الرغبات يدويًا يغيّر بصمة الملف فتتراجع المرحلة. وتشغيل `Run_*` مباشرة يتجاوز حارس اللوحة. وفرع `fullHash` غير مستعمل.
+5. **هشاشة حالة سير العمل.** آلية المراحل موجودة في أسماء مخفية لكنها غير فعّالة حاليًا (انظر 7.3): المرحلة تبقى 0، والحارس `WorkflowGuard01` غير قابل للوصول، فلا يفرض زرُّ التوجيه ترتيبًا ولا يمنع تشغيل خطوة منفردة من محرر VBA. وتعديل الرغبات يدويًا لا يؤثر في أي بصمة لأن البصمات تبحث عن أسماء ملفات لا ينتجها المشروع. وفرع `fullHash` غير مستعمل.
 6. **محاسبة تحويل المصادر.** في نسخ `ConvertSourceFilesToXLSX` يزداد عدّاد التحويل حتى لو فشل نقل الأصل (الخطأ مكتوم)، فيبقى الأصل مكانه ويُحسب فاشلًا في التشغيلات اللاحقة. وتحويل `.xlsm` يُسقط الماكرو. و`Collector` يستبدل `Term01Results.xlsx` دون تأكيد ويعيد `EnableEvents` / `DisplayAlerts` إلى `True` لا إلى قيمتهما السابقة؛ و`Orientation` يفرض `xlCalculationAutomatic`.
-7. **تكرار الشيفرة.** تضمّن `modBiuldAnalysisfilesAnalysis01` و`modBiuldAnalysisfilesCompare01` نسخة كاملة (نحو 1150 سطرًا) من محرك قراءة المصدر في `modBiuldAnalysisfilesData01`، عن قصد، لتعملا باستقلال (وتغييرات المحرك تُطبَّق في الوحدات الثلاث). وفوق ذلك يتكرر نحو 56 اسم إجراء في أكثر من وحدة (مثل `TryBirthDate` و`Norm` و`ArtsText` و`SrcProcessFile` و`ConvertSourceFilesToXLSX` و`PlaceHeaderTitle` و`SplitAtSchoolYear`). ومعظم النسخ متطابق؛ والاختلافات الحقيقية في `IsNum` و`LockAndProtect` و`IsWorkbookOpen` وصيغ `Data01` من `SrcProcessFile` / `SrcBuildWorkbook`. وتعمل `Transfer` و`StreamPreferences` و`Orientation` دائمًا معًا على مصنَّف واحد، فهي أحق الوحدات بالدمج في وحدة مشتركة.
+7. **تكرار الشيفرة.** تضمّن `modAnalysisBuilderAnalysis01` و`modAnalysisBuilderCompare01` نسخة كاملة (نحو 580 سطرًا) من محرك قراءة المصدر المستعمل في `modAnalysisBuilderData01`، عن قصد، لتعملا باستقلال (وتغييرات المحرك تُطبَّق في الوحدات الثلاث). وفوق ذلك يتكرر 73 اسم إجراء في أكثر من وحدة (مثل `TryBirthDate` و`Norm` و`ArtsText` و`SrcProcessFile` و`ConvertSourceFilesToXLSX` و`PlaceHeaderTitle` و`SplitAtSchoolYear`). ومعظم النسخ متطابق؛ والاختلافات الحقيقية في `IsNum` و`LockAndProtect` و`IsWorkbookOpen` وصيغ `Data01` من `SrcProcessFile` / `SrcBuildWorkbook`. وتعمل `Transfer` و`StreamPreferences` و`Orientation` دائمًا معًا على مصنَّف واحد، فهي أحق الوحدات بالدمج في وحدة مشتركة.
 8. **ثوابت خاصة بالمؤسسة.** خريطة الملفات وأعداد الأقسام المطلوبة (`1TecnoGlobal` أربعة و`SEGlobal` اثنان) وجداول المعاملات (`SheetCoefs`) و`MAX_STUDENTS` وبوادئ أسماء الملفات والأوراق العربية وأسماء المديرية والثانوية المطبوعة في رؤوس تقارير التوجيه (`modOrientation01`) مكتوبة ثابتة في أكثر من موضع.
 9. **أرقام سحرية.** تستعمل `Allowed()` حروفيات (10 و9 و20 و11) بدل `PASS_MARK`؛ و`PASS_MARK` نفسه معرَّف في ثلاث وحدات.
 10. **كتم الأخطاء.** أكثر من 100 تعليمة `On Error Resume Next` (أكثرها في `Transfer` و`Data01` و`Collector`). كثير منها يحرس عمليات اختيارية مشروعة، لكنها قد تخفي أعطالًا غير متوقعة.
@@ -445,12 +442,12 @@ On Error GoTo handler
 | الحاجة | موضع التغيير |
 |---|---|
 | نسب مقاعد أو قاعدة سن أو عتبة نجاح مختلفة | الثوابت في أعلى `modOrientation01` |
-| مؤسسة أخرى / أقسام مختلفة | `GetFileMap` في `Data01` (ونسختاها في `Analysis01` و`Compare01`)؛ و`CoreKeysFor` في `Analysis01` |
+| مؤسسة أخرى / أقسام مختلفة | `GetFileMap` في `modAnalysisBuilderData01` (ونسختاها في `modAnalysisBuilderAnalysis01` و`modAnalysisBuilderCompare01`)؛ و`CoreKeysFor` في `modAnalysisBuilderAnalysis01` |
 | مادة أو معاملات جديدة (الاختبارات) | `SheetIds` و`SheetCoefs` (لكل مستوى وشعبة) و`SubjectIdOf` و`SubjectIdFuzzy` ومفاتيح `sjNN` في `Ar` |
 | مستوى أو قسم أو شعبة جديدة (الاختبارات) | `NCOH` و`LevelOf` / `StreamOf` / `CohortIndex` و`SheetName` و`ResolveTarget` ومفاتيح `bnNN` / `gbNN` في `Ar` |
 | الفصل الثاني / الثالث | انسخ الوحدات وغيّر اللاحقة `01` وأسماء المجلدات والبوادئ العربية؛ وأبقِ النسخ مستقلة |
 | شعبة توجيه جديدة | `Eligible` / `Allowed` / `Compat` ومصفوفة السعة و`WishBranch` و`g_br` وباني التقرير |
-| تغيير اسم مجلد العمل | `WORK_FOLDER_CODES` في `modTransfer01` و`modCollector` و`modExamenAnalysis01` و`Analysis01` و`Compare01`؛ و`WF_FOLDER_CODES` في `modOrientation01` و`modStreamPreferences01` و`modOrientationResults01` و`modBuildPanel`؛ و`OutputFolderName` في `Common01` (يجب أن تتطابق كلها) |
+| تغيير اسم مجلد العمل | `WORK_FOLDER_CODES` في `modTransfer01` و`modCollector01` و`modExamenAnalysis01` و`modAnalysisBuilderAnalysis01` و`modAnalysisBuilderCompare01`؛ و`WF_FOLDER_CODES` في `modOrientation01` و`modStreamPreferences01` و`modOrientationResults01` و`modBuildPanel01`؛ و`OutputFolderName` في `modAnalysisBuilderCommon01` ونسخها المحلية في `modTransfer01` و`modExamenAnalysis01` و`modOrientation01` و`modOrientationResults01` (يجب أن تتطابق كلها) |
 | تثبيت السنة الدراسية | `WORK_YEAR_OVERRIDE` في `modOrientation01` |
 
 </div>

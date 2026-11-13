@@ -58,7 +58,14 @@ Public Sub BuildControlPanel()
         .Cells.Clear
         .DisplayRightToLeft = True
         .Columns("A").ColumnWidth = 3
-        .Columns("B:K").ColumnWidth = 9.6
+        .Columns("B").ColumnWidth = 5
+        .Columns("C").ColumnWidth = 28
+        .Columns("D").ColumnWidth = 12
+        .Columns("E").ColumnWidth = 18
+        .Columns("F").ColumnWidth = 28
+        .Columns("G").ColumnWidth = 12
+        .Columns("H").ColumnWidth = 3
+        .Columns("I:K").ColumnWidth = 22
         .Rows(1).RowHeight = 48
         .Rows(2).RowHeight = 14
         With .Range("B1:K1")
@@ -76,10 +83,10 @@ Public Sub BuildControlPanel()
 
     actions = PanelActions()
     count = UBound(actions) - LBound(actions) + 1
-    columns = 3
+    columns = 2
     canvasWidth = columns * BUTTON_WIDTH + (columns - 1) * BUTTON_GAP
-    originLeft = ws.Range("B3").Left + (ws.Range("B1:K1").Width - canvasWidth) / 2
-    originTop = ws.Range("B3").Top
+    originLeft = ws.Range("I5").Left + (ws.Range("I5:K5").Width - canvasWidth) / 2
+    originTop = ws.Range("I5").Top
     For i = 0 To count - 1
         item = actions(i)
         gridRow = i \ columns
@@ -110,6 +117,7 @@ Public Sub BuildControlPanel()
             End With
         End With
     Next i
+    Panel_BuildOutputTables ws
     If Not ActiveWindow Is Nothing Then
         ActiveWindow.DisplayGridlines = False
         ActiveWindow.DisplayHeadings = False
@@ -169,6 +177,92 @@ Public Sub RefreshPanelState()
             End With
         End If
     Next i
+    Panel_BuildOutputTables ws
+End Sub
+
+Private Sub Panel_BuildOutputTables(ByVal ws As Worksheet)
+    Dim map As Object, key As Variant, fso As Object, folder As Object, f As Object
+    Dim r As Long, startRow As Long, outDir As String, statusText As String, stage As Long
+    On Error Resume Next
+    startRow = 10
+    ws.Range("B" & startRow & ":G500").Clear
+    stage = TermWorkflowStage01()
+    Panel_TableTitle ws, startRow, "Orientation steps"
+    Panel_TableHeader ws, startRow + 1
+    Panel_TableRow ws, startRow + 2, 1, "Transfer guidance", IIf(stage >= 1, "Done", "Pending")
+    Panel_TableRow ws, startRow + 3, 2, "Stream preferences", IIf(stage >= 2, "Done", "Pending")
+    Panel_TableRow ws, startRow + 4, 3, "Orientation and results", IIf(stage >= 4, "Done", "Pending")
+
+    startRow = startRow + 7
+    Panel_TableTitle ws, startRow, "Analysis files"
+    Panel_TableHeader ws, startRow + 1
+    Set map = GetFileMap()
+    r = startRow + 2
+    outDir = ThisWorkbook.Path & Application.PathSeparator & WfFolderName()
+    For Each key In map.Keys
+        statusText = IIf(Panel_HasOutputStem(outDir, CStr(key)), "Available", "Not created")
+        Panel_TableRow ws, r, r - startRow - 1, CStr(key), statusText
+        r = r + 1
+    Next key
+
+    startRow = r + 2
+    Panel_TableTitle ws, startRow, "Other button outputs"
+    Panel_TableHeader ws, startRow + 1
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    If fso.FolderExists(outDir) Then
+        Set folder = fso.GetFolder(outDir)
+        r = startRow + 2
+        For Each f In folder.Files
+            If LCase$(fso.GetExtensionName(f.Name)) Like "xls*" Then
+                If Not Panel_IsAnalysisStem(map, f.Name) Then
+                    Panel_TableRow ws, r, r - startRow - 1, f.Name, "Available"
+                    r = r + 1
+                End If
+            End If
+        Next f
+    End If
+    Err.Clear
+End Sub
+
+Private Function Panel_HasOutputStem(ByVal folder As String, ByVal stem As String) As Boolean
+    Dim f As String
+    f = Dir$(folder & Application.PathSeparator & stem & "*.xlsx")
+    Panel_HasOutputStem = (Len(f) > 0)
+End Function
+
+Private Function Panel_IsAnalysisStem(ByVal map As Object, ByVal fileName As String) As Boolean
+    Dim key As Variant
+    For Each key In map.Keys
+        If StrComp(Left$(fileName, Len(CStr(key))), CStr(key), vbTextCompare) = 0 Then
+            Panel_IsAnalysisStem = True
+            Exit Function
+        End If
+    Next key
+End Function
+
+Private Sub Panel_TableTitle(ByVal ws As Worksheet, ByVal r As Long, ByVal title As String)
+    With ws.Range(ws.Cells(r, 2), ws.Cells(r, 7))
+        .Merge: .Value2 = title: .Font.Bold = True: .Font.Size = 14
+        .Font.Color = RGB(28, 55, 103): .HorizontalAlignment = xlRight
+        .Borders(xlEdgeBottom).LineStyle = xlContinuous
+    End With
+    ws.Rows(r).RowHeight = 25
+End Sub
+
+Private Sub Panel_TableHeader(ByVal ws As Worksheet, ByVal r As Long)
+    ws.Cells(r, 2).Value2 = "#": ws.Cells(r, 3).Value2 = "File / step": ws.Cells(r, 4).Value2 = "Status"
+    With ws.Range(ws.Cells(r, 2), ws.Cells(r, 4))
+        .Font.Bold = True: .Interior.Color = RGB(28, 55, 103): .Font.Color = vbWhite
+        .HorizontalAlignment = xlCenter
+    End With
+End Sub
+
+Private Sub Panel_TableRow(ByVal ws As Worksheet, ByVal r As Long, ByVal idx As Long, ByVal label As String, ByVal statusText As String)
+    ws.Cells(r, 2).Value2 = idx: ws.Cells(r, 3).Value2 = label: ws.Cells(r, 4).Value2 = statusText
+    With ws.Range(ws.Cells(r, 2), ws.Cells(r, 4))
+        .Borders.LineStyle = xlContinuous: .Borders.Color = RGB(191, 191, 191)
+        .VerticalAlignment = xlCenter
+    End With
 End Sub
 
 Public Sub ResultsGuard()

@@ -34,9 +34,9 @@
 | المجال | ما يفعله |
 |---|---|
 | التجميع | يحوّل ملفات `.xls` و`.xlsb` و`.xlsm` في `Source01\` إلى `.xlsx` (وتُنقل الأصول إلى `Source01\_Original`)، ثم يجمع كل ملفات المصدر في `Term01Results.xlsx` داخل مجلد العمل. |
-| مجلد العمل | **كل ملف تنتجه الأداة** يُكتب داخل مجلد اسمه «معالجة بيانات الفصل 01» بجوار الأداة: `Term01Results.xlsx` و`Term01Guidance.xlsx` (يُبنى من الصفر عند `Data Transfer`) و`OrientationResults01.xlsx` وملفات تحليل الاختبارات وملفات `Build_All` وملفات `Analysis` و`Compare` المستقلة. تبحث كل وحدة عن المجلد بالاسم، وأول وحدة تعمل تُنشئه. |
-| لوحة التحكم | الورقة `ControlPanel` وفيها سبعة أزرار: `First Term Results` و`Term 01 Analysis` (يشغّل `Build_All`) و`Examen Analysis` و`Stream Preferences` و`Data Transfer` و`First Term Orientation` و`Export Orientation Results`. أزرار التوجيه الأربعة مرتبة وتُفعَّل تباعًا. |
-| التوجيه | يتحقق من بيانات التلاميذ، ويستورد الرغبات بالاسم وتاريخ الميلاد، ويقترح شعبة لكل تلميذ ناجح، ويصدّر القوائم النهائية لكل قسم. |
+| مجلد العمل | **كل ملف تنتجه الأداة** يُكتب داخل مجلد اسمه «معالجة بيانات الفصل 01» بجوار الأداة: `Term01Results.xlsx` و`محضر التوجيه التدريجي للفصل 01.xlsx` (يُبنى من الصفر في الذاكرة عند `Data Transfer`) و`نتائج التوجيه التدريجي للفصل 01[_NN].xlsx` وملفات تحليل الاختبارات وملفات `Build_All` وملفات `Analysis` و`Compare` المستقلة. تبحث كل وحدة عن المجلد بالاسم، وأول وحدة تعمل تُنشئه. |
+| لوحة التحكم | الورقة `ControlPanel` وفيها أربعة أزرار: `First Term Results` و`Term 01 Analysis` (يشغّل `Build_All`) و`Examen Analysis` و`First Term Orientation` الذي ينفّذ خطوات التوجيه الأربع بنقرة واحدة. (ورقة `Term01Panel` لوحة تقدّم منفصلة فيها زرّا `Term 01 Analysis` و`فتح مجلد العمل`.) |
+| التوجيه | يتحقق من بيانات التلاميذ، ويكتشف ملف الرغبات داخل `Source01` ببنيته لا باسمه، ويطابق التلاميذ بالاسم وتاريخ الميلاد، ويقترح شعبة لكل تلميذ ناجح، ويصدّر القوائم النهائية لكل قسم. |
 | بناء ملفات التحليل | يولّد ملف `.xlsx` لكل مجموعة أقسام فيه الأوراق `Data` و`Analysis01` و`AnalyseCompare` (للمجموعات متعددة الأقسام فقط) و`Cart_Tec`، بصيغ حيّة. |
 | الماكروان المستقلان | `Run_Analysis01` (الورقتان `Data` و`Analysis01`) و`Run_Compare01` (الورقتان `Data` و`AnalyseCompare` للمجموعات متعددة الأقسام). يقرآن ملفات `Source01` الخام مباشرة، فلا يلزم تشغيل أي وحدة قبلهما. |
 | تحليل الاختبارات | يجمع علامات الاختبارات من `ExamenSource01\` وينتج **ملفًا لكل مستوى** (أولى وثانية وثالثة ثانوي؛ ولا يُنتَج ملف لمستوى بلا بيانات): ورقة عامة، وورقة لكل قسم فيه بيانات، وورقة ملخّص النقل. خلايا التحليل قيم ثابتة. |
@@ -50,7 +50,7 @@
 - يجب حفظ مصنَّف الأداة في **مجلد محلي** (لا في مسار OneDrive أو SharePoint). وكل نقطة دخول ترفض العمل خلاف ذلك.
 - تفعيل الماكرو شرط. أما خيار «الوثوق بالوصول إلى نموذج كائنات مشروع VBA» فاختياري (يُستعمل فقط للتحقق من وجود ماكروهات الأزرار).
 - الخطوط الموصى بها (تُطبَّق بدائل تلقائيًا عند غيابها): Cairo وDubai وDubai Medium وAptos Slab وArabic UI Display Light وBahnschrift SemiBold، والبدائل Arial وCalibri.
-- كل النصوص العربية في الشيفرة مخزَّنة بوصفها أكواد Unicode سداسية عشرية، فكل ملف `.bas` **ASCII خالص** ويُستورد بسلام تحت أي إعداد إقليمي للنظام.
+- النصوص العربية التي تظهر للمستخدم مخزَّنة في الشيفرة بوصفها أكواد Unicode سداسية عشرية، فلا تعتمد على ترميز الملف عند الاستيراد. (تعليقات ثلاثة ملفات `.bas` فقط مكتوبة بالعربية بترميز UTF-8: `modOrientationAll01` و`modOrientationResults01` و`modTransfer01`.)
 
 ---
 
@@ -60,22 +60,22 @@
 
 | الملف | `VB_Name` | الدور |
 |---|---|---|
-| `modBuildPanel01.bas` | `modBuildPanel` | يبني `ControlPanel` ويفرض ترتيب مراحل العمل (`RunTermStep01`) |
-| `modCollector01.bas` | `modCollector` | `CollectTerm01Results` ← `Term01Results.xlsx` (مجلد العمل) |
-| `modTransfer01.bas` | `modTransfer01` | `Run_Transfer01`: `Source01` ← `Term01Guidance.xlsx` (داخل مجلد العمل) |
-| `modStreamPreferences01.bas` | `modStreamPreferences01` | `Run_StreamPreferences01`: الرغبات ← `Term01Guidance.xlsx` |
+| `modBuildPanel01.bas` | `modBuildPanel01` | يبني `ControlPanel` (أربعة أزرار)، وتُنشأ ورقة التقدّم `Term01Panel` بتشغيل `Panel_Create`؛ وينفّذ سلسلة التوجيه كلها من زر `First Term Orientation` (`RunTermAll01`) |
+| `modCollector01.bas` | `modCollector01` | `CollectTerm01Results` ← `Term01Results.xlsx` (مجلد العمل) |
+| `modTransfer01.bas` | `modTransfer01` | `Run_Transfer01`: يبني مصنف التوجيه في الذاكرة من `Source01`، ويحفظه باسم `محضر التوجيه التدريجي للفصل 01[_NN].xlsx` داخل مجلد العمل |
+| `modStreamPreferences01.bas` | `modStreamPreferences01` | `Run_StreamPreferences01`: يكتشف ملف الرغبات داخل `Source01` ببنيته ويكتب أعمدة الرغبات في مصنف التوجيه |
 | `modOrientation01.bas` | `modOrientation01` | `Run_Orientation01`: توزيع الشعب + التقرير الحيّ |
-| `modOrientationResults01.bas` | `modOrientationResults01` | `Run_OrientationResults01` ← `OrientationResults01.xlsx` |
+| `modOrientationAll01.bas` | `modOrientationAll01` | `Run_OrientationAll01`: ينفّذ خطوات التوجيه الأربع بالتتابع (نقل ← رغبات ← توجيه ← تصدير) |
+| `modOrientationResults01.bas` | `modOrientationResults01` | `Run_OrientationResults01` ← `نتائج التوجيه التدريجي للفصل 01[_NN].xlsx` |
 | `modExamenAnalysis01.bas` | `modExamenAnalysis01` | `Run_ExamenAnalysis01` |
-| `modBiuldAnalysisfilesBuildAll01.bas` | `modBiuldAnalysisfilesBuildAll01` | منسّق `Build_All` و`Build_One` |
-| `modBiuldAnalysisfilesData01.bas` | `modBiuldAnalysisfilesData01` | يقرأ `Source01` ويبني ورقة `Data` وخريطة الملفات |
-| `modBiuldAnalysisfilesAnalysis01.bas` | `modBiuldAnalysisfilesAnalysis01` | يبني `Analysis01`؛ و`Run_Analysis01` (مستقل، يضمّن محرك قراءة المصدر) |
-| `modBiuldAnalysisfilesCompare01.bas` | `modBiuldAnalysisfilesCompare01` | يبني `AnalyseCompare`؛ و`Run_Compare01` (مستقل، يضمّن محرك قراءة المصدر) |
-| `modBiuldAnalysisfilesCartTec01.bas` | `modBiuldAnalysisfilesCartTec01` | يبني `Cart_Tec` |
-| `modBiuldAnalysisfilesCommon01.bas` | `modBiuldAnalysisfilesCommon01` | الثوابت والأنماط المشتركة واكتشاف بنية البيانات |
-| `modBiuldAnalysisfilesPanel01.bas` | `modBiuldAnalysisfilesPanel01` | يبني `Term01Panel` ويعرض التقدّم |
+| `modAnalysisBuilderBuildAll01.bas` | `modAnalysisBuilderBuildAll01` | منسّق `Build_All` و`Build_One` |
+| `modAnalysisBuilderData01.bas` | `modAnalysisBuilderData01` | يقرأ `Source01` ويبني ورقة `Data` وخريطة الملفات |
+| `modAnalysisBuilderAnalysis01.bas` | `modAnalysisBuilderAnalysis01` | يبني `Analysis01`؛ و`Run_Analysis01` (مستقل، يضمّن محرك قراءة المصدر) |
+| `modAnalysisBuilderCompare01.bas` | `modAnalysisBuilderCompare01` | يبني `AnalyseCompare`؛ و`Run_Compare01` (مستقل، يضمّن محرك قراءة المصدر) |
+| `modAnalysisBuilderCartTec01.bas` | `modAnalysisBuilderCartTec01` | يبني `Cart_Tec` |
+| `modAnalysisBuilderCommon01.bas` | `modAnalysisBuilderCommon01` | الثوابت والأنماط المشتركة واكتشاف بنية البيانات |
 
-> أسماء الملفات تحتفظ بإملائها الأصلي (`Biuld`). وإعادة تسميتها آمنة ما دام `VB_Name` لم يتغيّر.
+> الأسماء الفعلية لوحدات بناء التحليل هي `modAnalysisBuilder*`. أمّا `modBiuldAnalysisfiles*` فهي أسماء قديمة وردت في إصدارات سابقة من التوثيق، ولم تعد موجودة في المشروع.
 
 اللاحقة `01` تعني **الفصل الأول**. والتصميم يفترض نسخًا مستقلة من الحزمة لكل فصل (الفصل الثاني والثالث)، لا تتشارك الشيفرة عمدًا.
 
@@ -87,45 +87,44 @@
 
 1. أنشئ مصنَّفًا جديدًا واحفظه بصيغة `.xlsm` في مجلد محلي (يسمّى هنا «مجلد الأداة»).
 2. في محرر VBA اختر **File > Import File...** واستورد الوحدات:
-   - **كل الوحدات** (الموصى به: مصنَّف أداة واحد): `modBuildPanel01` و`modCollector01` و`modTransfer01` و`modStreamPreferences01` و`modOrientation01` و`modOrientationResults01` و`modExamenAnalysis01` وكل وحدات `modBiuldAnalysisfiles*01`. زر `Term 01 Analysis` في اللوحة يشغّل `Build_All`، فيجب أن تكون وحدات بناء التحليل في المصنَّف نفسه.
+   - **كل الوحدات** (الموصى به: مصنَّف أداة واحد): `modBuildPanel01` و`modCollector01` و`modTransfer01` و`modStreamPreferences01` و`modOrientation01` و`modOrientationAll01` و`modOrientationResults01` و`modExamenAnalysis01` وكل وحدات `modAnalysisBuilder*01`. زر `Term 01 Analysis` في اللوحة يشغّل `Build_All`، فيجب أن تكون وحدات بناء التحليل في المصنَّف نفسه.
    - أو وحدات بناء التحليل وحدها في مصنَّف منفصل (وتكون له عندئذ ورقة `Term01Panel` الخاصة به فقط).
-3. شغّل `BuildControlPanel` مرة واحدة لإنشاء لوحة الأزرار (وهو يبلّغ عن أي وحدة ناقصة). واختياريًا شغّل `Panel_Create` لإضافة ورقة التقدّم `Term01Panel` التي تستعملها `Build_All`.
+3. شغّل `BuildControlPanel` مرة واحدة لإنشاء لوحة الأزرار (وهو يبلّغ عن أي وحدة ناقصة). واختياريًا شغّل `Panel_Create` لإضافة ورقة التقدّم `Term01Panel` التي تستعملها `Build_All`؛ وهي لا تُنشأ تلقائيًا مع `BuildControlPanel`.
 
 ### 2. بنية المجلدات المتوقعة بجوار مصنَّف الأداة
 
 ```text
 <مجلد الأداة>\
   ToolWorkbook.xlsm
-  Source01\                      <- ملفات المنصة (.xls/.xlsb/.xlsm/.xlsx)
+  Source01\                      <- ملفات المنصة (.xls/.xlsb/.xlsm/.xlsx) ومنها يُكتشف ملف الرغبات ببنيته لا باسمه
   ExamenSource01\                <- مصنَّفات علامات الاختبارات (.xlsx) لتحليل الاختبارات
-  StreamPreferences01.xlsx       <- رغبات التلاميذ (الورقتان "Tecno" و/أو "Litr")
   معالجة بيانات الفصل 01\          <- مجلد العمل: تنشئه تلقائيًا أول وحدة تعمل
       Term01Results.xlsx         <- First Term Results
-      Term01Guidance.xlsx        <- يُبنى من الصفر عند Data Transfer ثم تحدّثه خطوات التوجيه
-      OrientationResults01.xlsx  <- Export Orientation Results
+      محضر التوجيه التدريجي للفصل 01[_NN].xlsx <- يُبنى في الذاكرة عند Data Transfer ويُحفظ بعد خطوة التوجيه
+      نتائج التوجيه التدريجي للفصل 01[_NN].xlsx         <- Export Orientation Results
       <ملف تحليل الاختبارات>.xlsx  <- Examen Analysis (ملف لكل مستوى)
       <الاسم>.xlsx + BuildLog_*   <- Term 01 Analysis / Build_All (Data وAnalysis01 وAnalyseCompare وCart_Tec)
-      <الاسم>_Analysis.xlsx       <- Run_Analysis01 (Data + Analysis01)
-      <الاسم>_Compare.xlsx        <- Run_Compare01 (Data + AnalyseCompare)
+      <الاسم>_Analysis.xlsx + AnalysisLog_* <- Run_Analysis01 (Data + Analysis01)
+      <الاسم>_Compare.xlsx + CompareLog_*   <- Run_Compare01 (Data + AnalyseCompare)
 ```
 
 المجلدات التي تنشئها الأداة: **مجلد العمل** «معالجة بيانات الفصل 01» داخل مجلد الأداة (تنشئه أول وحدة تعمل) و`Source01\_Original` (أرشيف الأصول المحوَّلة).
 
 ### 3. لا حاجة إلى قوالب
 
-المستودع يحوي الشيفرة فقط، و**لا يلزم أي مصنَّف قالب**: يبني `Data Transfer` الملف `Term01Guidance.xlsx` من الصفر داخل مجلد العمل (ورقة `Data` وجدولها، وورقة `Data01` فقط عند وجود أوراق آداب في المصدر). وأي ملف موجود في مجلد العمل يُعاد استعماله وتُعاد كتابة صفوف بياناته.
+المستودع يحوي الشيفرة فقط، و**لا يلزم أي مصنَّف قالب**: يبني `Data Transfer` مصنف التوجيه من الصفر في الذاكرة (ورقة `Data` وجدولها، وورقة `Data01` دائمًا ولو لم توجد أوراق آداب في المصدر). ولا يُعاد استعمال ملف سابق: كل تشغيل يحفظ نسخة جديدة بالاسم `محضر التوجيه التدريجي للفصل 01.xlsx` ثم `_01` و`_02`… عند وجود الاسم، ولا يستبدل ملفًا موجودًا أبدًا.
 
 ---
 
 ## مسار التوجيه
 
-تفرض لوحة التحكم هذا الترتيب: لا تُفعَّل الخطوة إلا إذا نجحت السابقة ولم تتغيّر الملفات بعدها.
+لا تفصل لوحة التحكم الخطوات الأربع: زر `First Term Orientation` واحد ينفّذها بالتتابع عبر `modOrientationAll01.Run_OrientationAll01`. ورقة `Term01Panel` تعرض حالة كل ملف أثناء التنفيذ، لكنها لا تفرض ترتيبًا ولا تمنع استدعاء أي خطوة منفردة من محرر VBA.
 
 ```text
-1. Data Transfer            Run_Transfer01             Source01 -> <مجلد العمل>\Term01Guidance.xlsx
-2. Stream Preferences       Run_StreamPreferences01    StreamPreferences01.xlsx -> أعمدة الرغبات
-3. First Term Orientation   Run_Orientation01          يكتب قرارًا لكل تلميذ ويبني التقرير
-4. Export Results           Run_OrientationResults01   -> OrientationResults01.xlsx
+1. Data Transfer            modTransfer01.Run_Transfer01            Source01 -> مصنف التوجيه في الذاكرة
+2. Stream Preferences       modStreamPreferences01.Run_StreamPreferences01  ملف الرغبات في Source01 -> أعمدة الرغبات
+3. First Term Orientation   modOrientation01.Run_Orientation01      يكتب قرارًا لكل تلميذ ويحفظ المحضر
+4. Export Results           modOrientationResults01.Run_OrientationResults01 -> نتائج التوجيه التدريجي للفصل 01[_NN].xlsx
 ```
 
 كل خطوة تتحقق من **كل** مدخلاتها أولًا، ولا تكتب شيئًا إن وجدت أي خطأ، وتعرض الرسالة أول 20 خلية خاطئة.
@@ -157,7 +156,7 @@
 | `OUT_SUFFIX` | Analysis وCompare | `"_Analysis"` / `"_Compare"` | لاحقة أسماء الملفات المستقلة |
 | `MAX_STUDENTS` | Examen | `60` | سعة القسم الواحد |
 
-خريطة الملفات (مجموعات الأقسام والأقسام المطلوبة لكل مجموعة) مكتوبة ثابتة في `GetFileMap` داخل `modBiuldAnalysisfilesData01` (ونسختيها المضمّنتين في `Analysis01` و`Compare01`). وتكييف الحزمة لمؤسسة أخرى يعني تعديلها هناك.
+خريطة الملفات (مجموعات الأقسام والأقسام المطلوبة لكل مجموعة) مكتوبة ثابتة في `GetFileMap` داخل `modAnalysisBuilderData01` (ونسختيها المضمّنتين في `modAnalysisBuilderAnalysis01` و`modAnalysisBuilderCompare01`). وتكييف الحزمة لمؤسسة أخرى يعني تعديلها هناك.
 
 ---
 
@@ -177,8 +176,8 @@
 - **قاعدة تتأثر بتاريخ التشغيل:** ما لم تُضبط `WORK_YEAR_OVERRIDE` تستعمل قاعدة السن `Year(Date)`، فإعادة تشغيل البيانات نفسها في سنة ميلادية أخرى قد تغيّر نتيجة *إعادة السنة* / *توجيه*.
 - **الصفر والغياب:** صيغ التحليل تعتبر `0` «غيابًا» (أقنعة `>0`)؛ أما التوجيه والنقل فيعدّانه علامة حقيقية؛ وتحليل الاختبارات يُدخله في المعدل المرجَّح لكن يستبعده من إحصاءات المادة.
 - **إعدادات خاصة بالمؤسسة** (أسماء الملفات وعدد الأقسام وجداول المعاملات وأسماء المديرية والثانوية في رؤوس تقارير التوجيه) مكتوبة ثابتة في الشيفرة.
-- **شيفرة مساعدة مكرّرة** بين الوحدات (نحو 56 اسم إجراء يتكرر أكثر من مرة). معظم النسخ متطابقة، لكن `IsNum` و`LockAndProtect` و`IsWorkbookOpen` لها صيغ مختلفة.
-- **نسخ المحرك المضمّنة:** تضمّن `modBiuldAnalysisfilesAnalysis01` و`modBiuldAnalysisfilesCompare01` نسخة كاملة (نحو 1150 سطرًا) من محرك قراءة المصدر في `modBiuldAnalysisfilesData01` لتعملا باستقلال. وأي تغيير في المحرك يجب تطبيقه في الوحدات الثلاث.
+- **شيفرة مساعدة مكرّرة** بين الوحدات (73 اسم إجراء يتكرر أكثر من مرة). معظم النسخ متطابقة، لكن `IsNum` و`LockAndProtect` و`IsWorkbookOpen` لها صيغ مختلفة.
+- **نسخ المحرك المضمّنة:** تضمّن `modAnalysisBuilderAnalysis01` و`modAnalysisBuilderCompare01` نسخة كاملة (نحو 580 سطرًا) من محرك قراءة المصدر المستعمل في `modAnalysisBuilderData01` لتعملا باستقلال. وأي تغيير في المحرك يجب تطبيقه في الوحدات الثلاث.
 - **Windows فقط**، ولمجلدات محلية فقط.
 - لا توجد اختبارات آلية. ولم تُختبر خوارزمية التوجيه خصوصًا على الدفعات الصغيرة (أقل من نحو 12 ناجحًا) ولا مع تعادل كبير في المعدلات.
 
@@ -213,7 +212,7 @@ ExamenSource01/
 | [user_guide_ar.md](user_guide_ar.md) | دليل المستخدم النهائي |
 | [troubleshooting_ar.md](troubleshooting_ar.md) | استكشاف الأخطاء وإصلاحها |
 
-وتوجد نظائر إنجليزية للوثائق التقنية: `README.md` و`ARCHITECTURE.md` و`contributing.md` و`security.md` و`test_plan.md` و`changelog.md`.
+لا توجد حاليًا نظائر إنجليزية لهذه الوثائق؛ النسخ الإنجليزية الستّ (`README.md` و`ARCHITECTURE.md` و`contributing.md` و`security.md` و`test_plan.md` و`changelog.md`) غير موجودة في المستودع.
 
 ## الترخيص
 
